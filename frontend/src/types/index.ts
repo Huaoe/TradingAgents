@@ -173,3 +173,28 @@ export interface BacktestInput {
   takerFee?: number;
   slippagePct?: number;
 }
+
+export interface Wallet {
+  id: string;
+  name: string;
+  address: string;
+  chain: string;
+  isDefault: boolean;
+  encryptedKey: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WalletInput {
+  name: string;
+  address: string;
+  chain?: string;
+  isDefault?: boolean;
+  privateKey: string;
+  masterPassword: string;
+}
+
+export interface WalletUpdateInput {
+  name?: string;
+  isDefault?: boolean;
+}

@@ -20,8 +20,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 0 — Repo Alignment | Setup | Done |
 | Sprint 1 — Hyperliquid Data Adapter | Epic 1 | Done (live market scanner + FastAPI backend merged in PR #2) |
 | Sprint 2 — Strategy Library & Builder | Epic 2 | Done (merged in PR #4) |
-| Sprint 3 — Backtesting Lab with Statistics | Epic 3 | In Progress |
-| Sprint 4 — Multi-Wallet Support | Epic 4 | Not started |
+| Sprint 3 — Backtesting Lab with Statistics | Epic 3 | Done (merged in PR #5) |
+| Sprint 4 — Multi-Wallet Support | Epic 4 | In Progress |
 | Sprint 5 — Signal Generation via TradingAgentsGraph | Epic 5 | Not started |
 | Sprint 6 — Auto-Trading & Execution Engine (Paper) | Epic 6 | Not started |
 | Sprint 7 — Live Trading & Risk Guardrails | Epic 6/7 | Not started |

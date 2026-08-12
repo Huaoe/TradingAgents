@@ -14,10 +14,12 @@ from pydantic import BaseModel
 
 from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.strategy import StrategyCreate, StrategyUpdate
+from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.backtest import run_backtest
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.signal_engine import generate_signal
 from backend.services.strategy_store import StrategyStore
+from backend.services.wallet_store import WalletStore
 from tradingagents.llm_clients import model_catalog
 
 
@@ -188,6 +190,56 @@ async def delete_strategy(strategy_id: str) -> dict[str, bool]:
     deleted = await asyncio.to_thread(store.delete_strategy, strategy_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+    return {"deleted": True}
+
+
+@app.get("/api/wallets")
+async def list_wallets() -> list[dict[str, Any]]:
+    store = WalletStore()
+    wallets = await asyncio.to_thread(store.list_wallets)
+    return [w.to_dict() for w in wallets]
+
+
+@app.get("/api/wallets/default")
+async def get_default_wallet() -> dict[str, Any]:
+    store = WalletStore()
+    wallet = await asyncio.to_thread(store.get_default_wallet)
+    if not wallet:
+        raise HTTPException(status_code=404, detail="No default wallet configured")
+    return wallet.to_dict()
+
+
+@app.get("/api/wallets/{wallet_id}")
+async def get_wallet(wallet_id: str) -> dict[str, Any]:
+    store = WalletStore()
+    wallet = await asyncio.to_thread(store.get_wallet, wallet_id)
+    if not wallet:
+        raise HTTPException(status_code=404, detail=f"Wallet {wallet_id} not found")
+    return wallet.to_dict()
+
+
+@app.post("/api/wallets")
+async def create_wallet(payload: WalletCreate) -> dict[str, Any]:
+    store = WalletStore()
+    wallet = await asyncio.to_thread(store.create_wallet, payload)
+    return wallet.to_dict()
+
+
+@app.patch("/api/wallets/{wallet_id}")
+async def update_wallet(wallet_id: str, payload: WalletUpdate) -> dict[str, Any]:
+    store = WalletStore()
+    wallet = await asyncio.to_thread(store.update_wallet, wallet_id, payload)
+    if not wallet:
+        raise HTTPException(status_code=404, detail=f"Wallet {wallet_id} not found")
+    return wallet.to_dict()
+
+
+@app.delete("/api/wallets/{wallet_id}")
+async def delete_wallet(wallet_id: str) -> dict[str, bool]:
+    store = WalletStore()
+    deleted = await asyncio.to_thread(store.delete_wallet, wallet_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Wallet {wallet_id} not found")
     return {"deleted": True}
 
 
