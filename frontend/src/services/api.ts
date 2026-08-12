@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult } from '../types';
+import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput } from '../types';
 import { positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -86,4 +86,34 @@ export async function acceptSignal(id: string): Promise<void> {
 
 export async function rejectSignal(id: string): Promise<void> {
   console.log('Signal rejected:', id);
+}
+
+export async function fetchWallets(): Promise<Wallet[]> {
+  return api<Wallet[]>('/api/wallets');
+}
+
+export async function fetchWallet(id: string): Promise<Wallet> {
+  return api<Wallet>(`/api/wallets/${id}`);
+}
+
+export async function fetchDefaultWallet(): Promise<Wallet> {
+  return api<Wallet>('/api/wallets/default');
+}
+
+export async function createWallet(wallet: WalletInput): Promise<Wallet> {
+  return api<Wallet>('/api/wallets', {
+    method: 'POST',
+    body: JSON.stringify(wallet),
+  });
+}
+
+export async function updateWallet(id: string, wallet: WalletUpdateInput): Promise<Wallet> {
+  return api<Wallet>(`/api/wallets/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(wallet),
+  });
+}
+
+export async function deleteWallet(id: string): Promise<void> {
+  await api<{ deleted: boolean }>(`/api/wallets/${id}`, { method: 'DELETE' });
 }
