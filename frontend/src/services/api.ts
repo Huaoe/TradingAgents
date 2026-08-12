@@ -20,8 +20,7 @@ export async function fetchMarkets(): Promise<Market[]> {
 }
 
 export async function fetchSignals(): Promise<Signal[]> {
-  // Signals are generated on demand via /api/analyze for now.
-  return [];
+  return api<Signal[]>('/api/signals');
 }
 
 export async function fetchPositions(): Promise<Position[]> {
@@ -80,12 +79,36 @@ export async function runBacktest(input: BacktestInput): Promise<BacktestResult>
   });
 }
 
+export interface SignalCreateInput {
+  symbol: string;
+  strategyId?: string;
+  strategy?: Record<string, unknown>;
+  useLlm?: boolean;
+}
+
+export async function createSignal(input: SignalCreateInput): Promise<Signal> {
+  return api<Signal>('/api/signals', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export async function acceptSignal(id: string): Promise<void> {
-  console.log('Signal accepted:', id);
+  await api<{ ok: boolean }>(`/api/signals/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'accepted' }),
+  });
 }
 
 export async function rejectSignal(id: string): Promise<void> {
-  console.log('Signal rejected:', id);
+  await api<{ ok: boolean }>(`/api/signals/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'rejected' }),
+  });
+}
+
+export async function deleteSignal(id: string): Promise<void> {
+  await api<{ deleted: boolean }>(`/api/signals/${id}`, { method: 'DELETE' });
 }
 
 export async function fetchWallets(): Promise<Wallet[]> {

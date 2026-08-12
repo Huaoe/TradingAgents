@@ -11,8 +11,8 @@ This document breaks the product into high-level epics. Each epic maps to the [H
 | Epic 1 — Hyperliquid Data Adapter | Done |
 | Epic 2 — Strategy Library & Builder | Done (merged in PR #4) |
 | Epic 3 — Backtesting Lab with Statistics | Done (merged in PR #5) |
-| Epic 4 — Multi-Wallet Support | In Progress |
-| Epic 5 — Signal Generation via TradingAgentsGraph | Not started |
+| Epic 4 — Multi-Wallet Support | Done (merged in PR #6) |
+| Epic 5 — Signal Generation via TradingAgentsGraph | In Progress |
 | Epic 6 — Auto-Trading & Execution Engine | Not started |
 | Epic 7 — Portfolio, Positions & Risk Management | Not started |
 | Epic 8 — Alerts, Reflection & UI Polish | Not started |
