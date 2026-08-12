@@ -1,5 +1,10 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.DS_Store
+*.csv
+/src/
+eval_results/
+eval_data/
 *.py[codz]
 *$py.class
 
