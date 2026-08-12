@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account } from '../types';
+import type { Market, Signal, Account } from '../types';
 
 export const account: Account = {
   wallet: '0x71C...9A2',
@@ -63,16 +63,6 @@ export const signals: Signal[] = [
     timestamp: '2026-08-12 11:50 UTC',
     status: 'rejected',
   },
-];
-
-export const positions: Position[] = [
-  { symbol: 'BTC', side: 'LONG', size: 0.12, entryPrice: 82300, markPrice: 84720.5, pnl: 290.46, pnlPct: 2.93, liquidationPrice: 61000, margin: 3313, leverage: 3 },
-  { symbol: 'SOL', side: 'LONG', size: 15, entryPrice: 138.2, markPrice: 145.8, pnl: 114, pnlPct: 5.5, liquidationPrice: 105, margin: 525, leverage: 4 },
-];
-
-export const orders: Order[] = [
-  { id: 'ord-1', symbol: 'BTC', side: 'Buy', size: 0.05, price: 82000, type: 'Limit', status: 'open', timestamp: '2026-08-12 10:00 UTC' },
-  { id: 'ord-2', symbol: 'SOL', side: 'Buy', size: 10, price: 142, type: 'Limit', status: 'filled', timestamp: '2026-08-12 09:30 UTC' },
 ];
 
 export const equityData = Array.from({ length: 30 }, (_, i) => ({

@@ -34,6 +34,9 @@ export interface Signal {
 export type PositionSide = 'LONG' | 'SHORT';
 
 export interface Position {
+  id: string;
+  orderId: string;
+  walletId: string;
   symbol: string;
   side: PositionSide;
   size: number;
@@ -44,6 +47,9 @@ export interface Position {
   liquidationPrice?: number;
   margin: number;
   leverage: number;
+  status: string;
+  openedAt: string;
+  closedAt: string | null;
 }
 
 export interface Order {

@@ -13,10 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.models.backtest import BacktestRequest, BacktestResult
+from backend.models.execution import ClosePositionRequest, ExecuteRequest
 from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
 from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.backtest import run_backtest
+from backend.services.execution_engine import ExecutionEngine
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
@@ -307,6 +309,60 @@ async def delete_wallet(wallet_id: str) -> dict[str, bool]:
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Wallet {wallet_id} not found")
     return {"deleted": True}
+
+
+@app.post("/api/execute")
+async def execute_trade(payload: ExecuteRequest) -> dict[str, Any]:
+    try:
+        engine = ExecutionEngine()
+        result = await asyncio.to_thread(
+            engine.execute,
+            payload.signalId,
+            payload.walletId,
+            payload.mode,
+            payload.masterPassword,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/positions")
+async def list_positions(wallet_id: str | None = None) -> list[dict[str, Any]]:
+    try:
+        engine = ExecutionEngine()
+        return await asyncio.to_thread(engine.list_positions, wallet_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/positions/{position_id}/close")
+async def close_position(position_id: str, payload: ClosePositionRequest) -> dict[str, Any]:
+    try:
+        engine = ExecutionEngine()
+        result = await asyncio.to_thread(
+            engine.close_position,
+            position_id,
+            payload.walletId,
+            payload.mode,
+            payload.masterPassword,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/orders")
+async def list_orders(wallet_id: str | None = None) -> list[dict[str, Any]]:
+    try:
+        engine = ExecutionEngine()
+        return await asyncio.to_thread(engine.list_orders, wallet_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 if __name__ == "__main__":
