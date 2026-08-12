@@ -6,10 +6,12 @@ import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from backend.models.alert import AlertReadRequest
@@ -441,6 +443,23 @@ async def list_journal(wallet_id: str | None = None, limit: int = 100) -> list[d
         return await asyncio.to_thread(engine.list_journal, wallet_id, limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# Serve the built React app from the Docker image. API routes above take precedence.
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+
+
+@app.get("/{full_path:path}")
+async def serve_frontend(full_path: str) -> Any:
+    if not FRONTEND_DIST.exists():
+        raise HTTPException(status_code=404, detail="Frontend build not found")
+    file = FRONTEND_DIST / full_path
+    if file.is_file():
+        return FileResponse(file)
+    index = FRONTEND_DIST / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 if __name__ == "__main__":

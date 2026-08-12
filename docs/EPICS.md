@@ -15,7 +15,7 @@ This document breaks the product into high-level epics. Each epic maps to the [H
 | Epic 5 — Signal Generation via TradingAgentsGraph | Done (merged in PR #7) |
 | Epic 6 — Auto-Trading & Execution Engine | Done (merged in PR #8) |
 | Epic 7 — Portfolio, Positions & Risk Management | Done (merged in PR #9) |
-| Epic 8 — Alerts, Reflection & UI Polish | In Progress |
+| Epic 8 — Alerts, Reflection & UI Polish | Done (merged in PR #10) |
 
 ---
 
