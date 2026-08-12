@@ -12,12 +12,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.models.alert import AlertReadRequest
 from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.execution import ClosePositionRequest, ExecuteRequest
 from backend.models.portfolio import LiveModeRequest, PortfolioSummary
 from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
 from backend.models.wallet import WalletCreate, WalletUpdate
+from backend.services.alert_engine import AlertEngine
 from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
 from backend.services.hyperliquid_client import HyperliquidClient
@@ -385,6 +387,58 @@ async def set_live_mode(payload: LiveModeRequest) -> dict[str, Any]:
             engine.portfolio_store.set_live_enabled, payload.walletId, payload.enabled
         )
         return {"walletId": payload.walletId, "liveEnabled": payload.enabled}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/alerts")
+async def list_alerts(
+    wallet_id: str | None = None, unread_only: bool = False
+) -> list[dict[str, Any]]:
+    try:
+        engine = AlertEngine()
+        return await asyncio.to_thread(engine.list_alerts, wallet_id, unread_only)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/alerts/unread")
+async def unread_alert_count(wallet_id: str | None = None) -> dict[str, Any]:
+    try:
+        engine = AlertEngine()
+        count = await asyncio.to_thread(engine.unread_count, wallet_id)
+        return {"unread": count}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/alerts/{alert_id}/read")
+async def read_alert(alert_id: str, payload: AlertReadRequest | None = None) -> dict[str, Any]:
+    try:
+        engine = AlertEngine()
+        if payload is None:
+            payload = AlertReadRequest()
+        ok = await asyncio.to_thread(engine.mark_read, alert_id)
+        return {"alertId": alert_id, "read": ok}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/alerts/read-all")
+async def read_all_alerts(wallet_id: str | None = None) -> dict[str, Any]:
+    try:
+        engine = AlertEngine()
+        ok = await asyncio.to_thread(engine.store.mark_all_read, wallet_id)
+        return {"read": ok}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/journal")
+async def list_journal(wallet_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    try:
+        engine = AlertEngine()
+        return await asyncio.to_thread(engine.list_journal, wallet_id, limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

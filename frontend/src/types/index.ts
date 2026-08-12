@@ -212,3 +212,33 @@ export interface WalletUpdateInput {
   name?: string;
   isDefault?: boolean;
 }
+
+export interface Alert {
+  id: string;
+  walletId?: string;
+  relatedId?: string;
+  type: 'signal' | 'position' | 'risk' | 'system';
+  severity: 'info' | 'success' | 'warning' | 'error';
+  message: string;
+  read: boolean;
+  timestamp: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  walletId?: string;
+  positionId?: string;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  exitPrice: number;
+  size: number;
+  leverage: number;
+  grossPnl: number;
+  fees: number;
+  netPnl: number;
+  reasoning?: string;
+  reflection?: string;
+  openedAt: string;
+  closedAt: string;
+}
