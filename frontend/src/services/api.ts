@@ -1,5 +1,5 @@
 import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput } from '../types';
-import { positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
+import { account as mockAccount } from '../data/mockData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -23,16 +23,46 @@ export async function fetchSignals(): Promise<Signal[]> {
   return api<Signal[]>('/api/signals');
 }
 
-export async function fetchPositions(): Promise<Position[]> {
-  return mockPositions;
+export async function fetchPositions(walletId?: string): Promise<Position[]> {
+  const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
+  return api<Position[]>(`/api/positions${qs}`);
 }
 
-export async function fetchOrders(): Promise<Order[]> {
-  return mockOrders;
+export async function fetchOrders(walletId?: string): Promise<Order[]> {
+  const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
+  return api<Order[]>(`/api/orders${qs}`);
 }
 
 export async function fetchAccount(): Promise<Account> {
   return mockAccount;
+}
+
+export interface ExecuteInput {
+  signalId: string;
+  walletId: string;
+  mode?: 'paper' | 'live';
+  masterPassword?: string;
+}
+
+export async function executeSignal(input: ExecuteInput): Promise<{ order: Order; position: Position | null }> {
+  return api<{ order: Order; position: Position | null }>('/api/execute', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export interface ClosePositionInput {
+  positionId: string;
+  walletId: string;
+  mode?: 'paper' | 'live';
+  masterPassword?: string;
+}
+
+export async function closePosition(input: ClosePositionInput): Promise<{ position: Position; netPnl: number }> {
+  return api<{ position: Position; netPnl: number }>(`/api/positions/${input.positionId}/close`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export async function runAnalysis(symbol: string, strategyId?: string, strategy?: Record<string, unknown>): Promise<Signal> {

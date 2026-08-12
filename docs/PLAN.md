@@ -22,8 +22,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 2 — Strategy Library & Builder | Epic 2 | Done (merged in PR #4) |
 | Sprint 3 — Backtesting Lab with Statistics | Epic 3 | Done (merged in PR #5) |
 | Sprint 4 — Multi-Wallet Support | Epic 4 | Done (merged in PR #6) |
-| Sprint 5 — Signal Generation via TradingAgentsGraph | Epic 5 | In Progress |
-| Sprint 6 — Auto-Trading & Execution Engine (Paper) | Epic 6 | Not started |
+| Sprint 5 — Signal Generation via TradingAgentsGraph | Epic 5 | Done (merged in PR #7) |
+| Sprint 6 — Auto-Trading & Execution Engine (Paper) | Epic 6 | In Progress |
 | Sprint 7 — Live Trading & Risk Guardrails | Epic 6/7 | Not started |
 | Sprint 8 — Portfolio, Positions & Risk Dashboard | Epic 7 | Not started |
 | Sprint 9 — Alerts, Reflection & UI Polish | Epic 8 | Not started |

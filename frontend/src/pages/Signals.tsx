@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Check, X, Bot, Loader2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
-import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal } from '../services/api';
+import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal, executeSignal } from '../services/api';
+import { useWallet } from '../context/WalletContext';
 import type { Signal, Strategy } from '../types';
 
 export function Signals() {
+  const { selectedWallet } = useWallet();
   const [signals, setSignals] = useState<Signal[]>([]);
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [symbol, setSymbol] = useState('BTC');
@@ -42,8 +44,16 @@ export function Signals() {
 
   const updateStatus = async (id: string, status: 'accepted' | 'rejected') => {
     try {
-      if (status === 'accepted') await acceptSignal(id);
-      else await rejectSignal(id);
+      if (status === 'accepted') {
+        if (!selectedWallet) {
+          setError('Select an active wallet before accepting a signal');
+          return;
+        }
+        await acceptSignal(id);
+        await executeSignal({ signalId: id, walletId: selectedWallet.id, mode: 'paper' });
+      } else {
+        await rejectSignal(id);
+      }
       setSignals((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Status update failed');
