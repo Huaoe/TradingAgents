@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Play, Loader2 } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
-import { fetchMarkets, runAnalysis } from '../services/api';
-import type { Market, Signal } from '../types';
+import { fetchMarkets, fetchStrategies, runAnalysis } from '../services/api';
+import type { Market, Signal, Strategy } from '../types';
 
 export function Scanner() {
   const [markets, setMarkets] = useState<Market[]>([]);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [latestSignal, setLatestSignal] = useState<Signal | null>(null);
 
   useEffect(() => {
     fetchMarkets().then(setMarkets);
+    fetchStrategies().then(setStrategies).catch(console.error);
   }, []);
 
   const handleAnalyze = async (symbol: string) => {
     setAnalyzing(symbol);
     try {
-      const signal = await runAnalysis(symbol);
+      const signal = await runAnalysis(symbol, selectedStrategyId || undefined);
       setLatestSignal(signal);
     } finally {
       setAnalyzing(null);
@@ -25,9 +28,26 @@ export function Scanner() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Market Scanner</h1>
-        <p className="text-sm text-gray-400 mt-1">Run TradingAgents analysis on Hyperliquid markets</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Market Scanner</h1>
+          <p className="text-sm text-gray-400 mt-1">Run TradingAgents analysis on Hyperliquid markets</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-gray-400">Strategy</label>
+          <select
+            value={selectedStrategyId}
+            onChange={(e) => setSelectedStrategyId(e.target.value)}
+            className="px-3 py-2 rounded-lg bg-[#11141c] border border-gray-800 text-sm focus:border-violet-500 outline-none"
+          >
+            <option value="">Default</option>
+            {strategies.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {latestSignal && (
