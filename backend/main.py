@@ -12,7 +12,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.strategy import StrategyCreate, StrategyUpdate
+from backend.services.backtest import run_backtest
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.signal_engine import generate_signal
 from backend.services.strategy_store import StrategyStore
@@ -80,6 +82,39 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
                 )
         signal = generate_signal(payload.symbol, strategy)
         return signal
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/backtest")
+async def backtest(payload: BacktestRequest) -> BacktestResult:
+    try:
+        strategy: dict[str, Any] = payload.strategy or {}
+        if payload.strategyId:
+            store = StrategyStore()
+            stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
+            if stored:
+                strategy = {**stored.model_dump(), **strategy}
+            else:
+                raise HTTPException(
+                    status_code=404, detail=f"Strategy {payload.strategyId} not found"
+                )
+        result = run_backtest(
+            symbol=payload.symbol,
+            interval=payload.interval,
+            start_at=payload.startAt,
+            end_at=payload.endAt,
+            strategy=strategy,
+            initial_balance=payload.initialBalance,
+            maker_fee=payload.makerFee,
+            taker_fee=payload.takerFee,
+            slippage_pct=payload.slippagePct,
+        )
+        return BacktestResult(**result)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except HTTPException:

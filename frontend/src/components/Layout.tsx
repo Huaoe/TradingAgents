@@ -1,10 +1,11 @@
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Radio, Wallet, Bot, Cpu } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Radio, Wallet, Bot, Cpu, LineChart } from 'lucide-react';
 
 const nav = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/scanner', label: 'Scanner', icon: ScanLine },
   { path: '/strategies', label: 'Strategies', icon: Cpu },
+  { path: '/backtest', label: 'Backtest', icon: LineChart },
   { path: '/signals', label: 'Signals', icon: Radio },
   { path: '/positions', label: 'Positions', icon: Wallet },
 ];

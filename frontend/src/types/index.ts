@@ -95,7 +95,7 @@ export interface Strategy {
 }
 
 export interface StrategyInput {
-  name: string;
+  name?: string;
   description?: string;
   template?: string;
   markets?: string[];
@@ -112,4 +112,64 @@ export interface ModelCatalog {
   [provider: string]: {
     [mode: string]: { label: string; value: string }[];
   };
+}
+
+export type BacktestInterval = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+
+export interface BacktestSummary {
+  initialBalance: number;
+  finalBalance: number;
+  totalReturnPct: number;
+  benchmarkReturnPct: number;
+  sharpeRatio: number;
+  maxDrawdownPct: number;
+  winRatePct: number;
+  profitFactor: number;
+  totalTrades: number;
+  avgTradeReturnPct: number;
+  avgWinPct: number;
+  avgLossPct: number;
+  startTime: string;
+  endTime: string;
+  interval: string;
+  symbol: string;
+  strategyName: string;
+}
+
+export interface BacktestTrade {
+  entryTime: string;
+  exitTime: string;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  entryPrice: number;
+  exitPrice: number;
+  sizeCoin: number;
+  notional: number;
+  leverage: number;
+  grossPnl: number;
+  fees: number;
+  fundingCost: number;
+  netPnl: number;
+  returnPct: number;
+}
+
+export interface BacktestResult {
+  summary: BacktestSummary;
+  equity: { time: string; equity: number }[];
+  drawdown: { time: string; drawdown: number }[];
+  trades: BacktestTrade[];
+  monthlyReturns: Record<string, number> | null;
+}
+
+export interface BacktestInput {
+  symbol: string;
+  interval: BacktestInterval;
+  startAt: string;
+  endAt: string;
+  strategyId?: string;
+  strategy?: Record<string, unknown>;
+  initialBalance?: number;
+  makerFee?: number;
+  takerFee?: number;
+  slippagePct?: number;
 }

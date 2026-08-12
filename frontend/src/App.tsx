@@ -6,6 +6,7 @@ import { Signals } from './pages/Signals';
 import { Positions } from './pages/Positions';
 import { Strategies } from './pages/Strategies';
 import { StrategyEditor } from './pages/StrategyEditor';
+import { Backtest } from './pages/Backtest';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/strategies/new" element={<StrategyEditor />} />
           <Route path="/strategies/:id" element={<StrategyEditor />} />
+          <Route path="/backtest" element={<Backtest />} />
         </Routes>
       </Layout>
     </BrowserRouter>
