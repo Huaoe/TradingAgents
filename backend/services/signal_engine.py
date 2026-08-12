@@ -1,13 +1,14 @@
-"""Rule-based signal generation for Hyperliquid markets.
+"""Signal generation for Hyperliquid markets.
 
-This module is intentionally deterministic: it turns live Hyperliquid market,
-funding, open-interest, and order-book data into a typed signal that the
-frontend can display immediately. It is a stop-gap until the full
-TradingAgentsGraph (LLM multi-agent) pipeline is wired and configured.
+Provides a deterministic rule engine and an optional ``TradingAgentsGraph``
+(LLM multi-agent) path. The LLM path is used only when a provider API key is
+configured; otherwise the deterministic engine runs and the caller can include a
+warning in the response.
 """
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -57,11 +58,12 @@ def _candle_features(client: HyperliquidClient, symbol: str) -> dict[str, Any]:
     }
 
 
-def generate_signal(
+def _build_signal(
     symbol: str,
     strategy: dict[str, Any] | None = None,
+    forced_action: str | None = None,
 ) -> dict[str, Any]:
-    """Return a signal dict compatible with the frontend ``Signal`` type."""
+    """Build a signal dict from Hyperliquid market data and optional strategy."""
     client = HyperliquidClient()
     market = client.get_market(symbol)
     if market is None:
@@ -75,7 +77,9 @@ def generate_signal(
     book = client.get_orderbook(symbol, levels=10)
 
     # Configurable thresholds from strategy or defaults
-    cfg = strategy or {}
+    raw_cfg = strategy or {}
+    risk_cfg = raw_cfg.get("riskConfig") or {}
+    cfg = {**raw_cfg, **risk_cfg}
     long_funding_threshold = cfg.get("longFundingThreshold", -0.0005)
     short_funding_threshold = cfg.get("shortFundingThreshold", 0.0005)
     leverage = min(int(cfg.get("leverage", 3)), market.get("maxLeverage", 3))
@@ -143,6 +147,9 @@ def generate_signal(
     if score < confidence_floor and score > (100 - confidence_floor):
         action = "HOLD"
 
+    if forced_action in ("BUY", "SELL", "HOLD"):
+        action = forced_action
+
     # Conservative position sizing: notional in USDC, fixed to a $10k reference wallet
     # so the frontend can scale to the real wallet later.
     reference_wallet = 10_000.0
@@ -197,3 +204,83 @@ def generate_signal(
             "openInterest": oi,
         },
     }
+
+
+def _llm_available() -> bool:
+    """Check whether any upstream LLM API key is present."""
+    return any(
+        os.environ.get(k)
+        for k in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+        )
+    )
+
+
+def generate_signal(
+    symbol: str,
+    strategy: dict[str, Any] | None = None,
+    use_llm: bool = False,
+) -> dict[str, Any]:
+    """Return a signal dict compatible with the frontend ``Signal`` type.
+
+    When ``use_llm`` is True and an LLM API key is configured, the upstream
+    ``TradingAgentsGraph`` is used with ``asset_type="crypto"``; otherwise the
+    deterministic rule engine is used. In both cases market data comes from
+    the Hyperliquid client.
+    """
+    if use_llm and _llm_available():
+        try:
+            return _generate_signal_llm(symbol, strategy)
+        except Exception as exc:  # noqa: BLE001
+            # Fall back to deterministic engine if the graph fails.
+            signal = _generate_signal_deterministic(symbol, strategy)
+            signal["reasoning"] = (
+                f"LLM path failed ({exc}); using rule engine. {signal['reasoning']}"
+            )
+            signal["agents"].append("LLM(fallback)")
+            return signal
+    return _generate_signal_deterministic(symbol, strategy)
+
+
+def _generate_signal_deterministic(
+    symbol: str,
+    strategy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deterministic rule-engine signal (renamed from the original implementation)."""
+    return _build_signal(symbol, strategy)
+
+
+def _generate_signal_llm(
+    symbol: str,
+    strategy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Run the TradingAgentsGraph and normalize its decision to a frontend signal."""
+    from tradingagents.agents.utils.rating import parse_rating
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    config = DEFAULT_CONFIG.copy()
+    # Use Hyperliquid-style crypto pipeline and today's date.
+    trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ta = TradingAgentsGraph(debug=False, config=config)
+    final_state, decision = ta.propagate(symbol.upper(), trade_date, asset_type="crypto")
+    full_text = final_state.get("final_trade_decision", "") or str(decision)
+    rating = parse_rating(full_text)
+    action_map = {
+        "Buy": "BUY",
+        "Overweight": "BUY",
+        "Hold": "HOLD",
+        "Underweight": "SELL",
+        "Sell": "SELL",
+    }
+    action = action_map.get(rating, "HOLD")
+
+    # Use deterministic sizing for the LLM recommendation.
+    signal = _build_signal(symbol, strategy, forced_action=action)
+    signal["agents"] = ["LLM-Research", "LLM-Trader", "LLM-Risk"]
+    signal["reasoning"] = f"LLM Portfolio Manager rating: {rating}. {signal['reasoning']}"
+    signal["meta"]["llmDecision"] = full_text
+    return signal

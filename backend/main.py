@@ -13,11 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from backend.models.backtest import BacktestRequest, BacktestResult
+from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
 from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.backtest import run_backtest
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.signal_engine import generate_signal
+from backend.services.signal_store import SignalStore
 from backend.services.strategy_store import StrategyStore
 from backend.services.wallet_store import WalletStore
 from tradingagents.llm_clients import model_catalog
@@ -49,6 +51,7 @@ class AnalyzeRequest(BaseModel):
     symbol: str
     strategy: dict[str, Any] | None = None
     strategyId: str | None = None
+    useLlm: bool = False
 
 
 @app.get("/api/health")
@@ -82,7 +85,7 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
                 raise HTTPException(
                     status_code=404, detail=f"Strategy {payload.strategyId} not found"
                 )
-        signal = generate_signal(payload.symbol, strategy)
+        signal = generate_signal(payload.symbol, strategy, use_llm=payload.useLlm)
         return signal
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -90,6 +93,69 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/signals")
+async def create_signal(payload: SignalCreate) -> dict[str, Any]:
+    try:
+        strategy: dict[str, Any] = payload.strategy or {}
+        if payload.strategyId:
+            store = StrategyStore()
+            stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
+            if stored:
+                strategy = {**stored.riskConfig.model_dump(), **strategy}
+            else:
+                raise HTTPException(
+                    status_code=404, detail=f"Strategy {payload.strategyId} not found"
+                )
+        signal = generate_signal(payload.symbol, strategy, use_llm=payload.useLlm)
+        signal_store = SignalStore()
+        await asyncio.to_thread(signal_store.store_signal, signal)
+        return signal
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/signals")
+async def list_signals(limit: int = 100) -> list[dict[str, Any]]:
+    store = SignalStore()
+    return await asyncio.to_thread(store.list_signals, limit)
+
+
+@app.get("/api/signals/{signal_id}")
+async def get_signal(signal_id: str) -> dict[str, Any]:
+    store = SignalStore()
+    signal = await asyncio.to_thread(store.get_signal, signal_id)
+    if not signal:
+        raise HTTPException(status_code=404, detail=f"Signal {signal_id} not found")
+    return signal
+
+
+@app.patch("/api/signals/{signal_id}")
+async def update_signal_status(signal_id: str, status: dict[str, Any]) -> dict[str, Any]:
+    store = SignalStore()
+    signal = await asyncio.to_thread(store.get_signal, signal_id)
+    if not signal:
+        raise HTTPException(status_code=404, detail=f"Signal {signal_id} not found")
+    new_status = status.get("status")
+    if new_status not in ("pending", "accepted", "rejected"):
+        raise HTTPException(status_code=400, detail="Invalid status")
+    await asyncio.to_thread(store.update_status, signal_id, new_status)
+    signal["status"] = new_status
+    return signal
+
+
+@app.delete("/api/signals/{signal_id}")
+async def delete_signal(signal_id: str) -> dict[str, bool]:
+    store = SignalStore()
+    deleted = await asyncio.to_thread(store.delete_signal, signal_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Signal {signal_id} not found")
+    return {"deleted": True}
 
 
 @app.post("/api/backtest")

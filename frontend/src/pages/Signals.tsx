@@ -1,29 +1,122 @@
 import { useEffect, useState } from 'react';
-import { Check, X, Bot } from 'lucide-react';
+import { Check, X, Bot, Loader2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
-import { fetchSignals, acceptSignal, rejectSignal } from '../services/api';
-import type { Signal } from '../types';
+import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal } from '../services/api';
+import type { Signal, Strategy } from '../types';
 
 export function Signals() {
   const [signals, setSignals] = useState<Signal[]>([]);
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [symbol, setSymbol] = useState('BTC');
+  const [strategyId, setStrategyId] = useState('');
+  const [useLlm, setUseLlm] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchSignals().then(setSignals);
+    refresh();
+    fetchStrategies().then((list) => {
+      setStrategies(list);
+      const saved = list.find((s) => !s.id.startsWith('template-'));
+      if (saved) setStrategyId(saved.id);
+    });
   }, []);
 
-  const updateStatus = (id: string, status: 'accepted' | 'rejected') => {
-    const update = status === 'accepted' ? acceptSignal : rejectSignal;
-    update(id).then(() => {
+  const refresh = () => {
+    fetchSignals().then(setSignals).catch(() => setSignals([]));
+  };
+
+  async function handleGenerate(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      await createSignal({ symbol: symbol.toUpperCase(), strategyId: strategyId || undefined, useLlm });
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to generate signal');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const updateStatus = async (id: string, status: 'accepted' | 'rejected') => {
+    try {
+      if (status === 'accepted') await acceptSignal(id);
+      else await rejectSignal(id);
       setSignals((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
-    });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Status update failed');
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await deleteSignal(id);
+      setSignals((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    }
   };
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Signal Feed</h1>
-        <p className="text-sm text-gray-400 mt-1">Review and act on TradingAgents signals</p>
+        <p className="text-sm text-gray-400 mt-1">Generate and act on TradingAgents signals</p>
       </div>
+
+      <Card title="Generate Signal">
+        <form onSubmit={handleGenerate} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Symbol</label>
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Strategy</label>
+            <select
+              value={strategyId}
+              onChange={(e) => setStrategyId(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            >
+              <option value="">Default (custom rules)</option>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-gray-300 md:col-span-1 pb-2">
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(e) => setUseLlm(e.target.checked)}
+              className="rounded border-gray-700 bg-gray-900 text-violet-600"
+            />
+            <span className="flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-400" /> Use LLM (if key configured)
+            </span>
+          </label>
+          <button
+            type="submit"
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            Generate
+          </button>
+        </form>
+        {error && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+      </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {signals.map((sig) => (
@@ -34,7 +127,15 @@ export function Signals() {
                 <span className="font-semibold text-lg">{sig.symbol}</span>
                 <Badge action={sig.action} />
               </div>
-              <span className="text-xs text-gray-500">{sig.timestamp}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">{new Date(sig.timestamp).toLocaleString()}</span>
+                <button
+                  onClick={() => remove(sig.id)}
+                  className="p-1 text-gray-500 hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
 
             <p className="text-sm text-gray-300 mb-4 flex-1">{sig.reasoning}</p>
@@ -46,7 +147,7 @@ export function Signals() {
               </div>
               <div className="bg-gray-800/30 rounded-lg p-2">
                 <div className="text-gray-500 text-xs">Size</div>
-                <div className="font-medium">${sig.size}</div>
+                <div className="font-medium">${sig.size.toLocaleString()}</div>
               </div>
               <div className="bg-gray-800/30 rounded-lg p-2">
                 <div className="text-gray-500 text-xs">Leverage</div>
@@ -96,6 +197,7 @@ export function Signals() {
             )}
           </Card>
         ))}
+        {signals.length === 0 && <div className="text-gray-500 text-sm">No signals yet. Generate one above.</div>}
       </div>
     </div>
   );
