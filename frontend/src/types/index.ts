@@ -65,3 +65,51 @@ export interface Account {
   unrealizedPnl: number;
   dailyPnl: number;
 }
+
+export type ExecutionMode = 'manual' | 'auto-confirm' | 'auto';
+export type LLMMode = 'quick' | 'deep';
+
+export interface RiskConfig {
+  longFundingThreshold: number;
+  shortFundingThreshold: number;
+  leverage: number;
+  allocation: number;
+  confidenceFloor: number;
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  description: string;
+  template: string;
+  markets: string[];
+  agents: string[];
+  llmProvider: string;
+  llmModel: string;
+  llmMode: LLMMode;
+  executionMode: ExecutionMode;
+  schedule: string;
+  riskConfig: RiskConfig;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StrategyInput {
+  name: string;
+  description?: string;
+  template?: string;
+  markets?: string[];
+  agents?: string[];
+  llmProvider?: string;
+  llmModel?: string;
+  llmMode?: LLMMode;
+  executionMode?: ExecutionMode;
+  schedule?: string;
+  riskConfig?: Partial<RiskConfig>;
+}
+
+export interface ModelCatalog {
+  [provider: string]: {
+    [mode: string]: { label: string; value: string }[];
+  };
+}

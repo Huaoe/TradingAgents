@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account } from '../types';
+import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog } from '../types';
 import { positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -36,11 +36,41 @@ export async function fetchAccount(): Promise<Account> {
   return mockAccount;
 }
 
-export async function runAnalysis(symbol: string, strategy?: Record<string, unknown>): Promise<Signal> {
+export async function runAnalysis(symbol: string, strategyId?: string, strategy?: Record<string, unknown>): Promise<Signal> {
   return api<Signal>('/api/analyze', {
     method: 'POST',
-    body: JSON.stringify({ symbol, strategy }),
+    body: JSON.stringify({ symbol, strategyId, strategy }),
   });
+}
+
+export async function fetchModelCatalog(): Promise<ModelCatalog> {
+  return api<ModelCatalog>('/api/models');
+}
+
+export async function fetchStrategies(): Promise<Strategy[]> {
+  return api<Strategy[]>('/api/strategies');
+}
+
+export async function fetchStrategy(id: string): Promise<Strategy> {
+  return api<Strategy>(`/api/strategies/${id}`);
+}
+
+export async function createStrategy(strategy: StrategyInput): Promise<Strategy> {
+  return api<Strategy>('/api/strategies', {
+    method: 'POST',
+    body: JSON.stringify(strategy),
+  });
+}
+
+export async function updateStrategy(id: string, strategy: StrategyInput): Promise<Strategy> {
+  return api<Strategy>(`/api/strategies/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(strategy),
+  });
+}
+
+export async function deleteStrategy(id: string): Promise<void> {
+  await api<{ deleted: boolean }>(`/api/strategies/${id}`, { method: 'DELETE' });
 }
 
 export async function acceptSignal(id: string): Promise<void> {
