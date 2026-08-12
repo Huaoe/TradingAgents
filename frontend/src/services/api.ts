@@ -1,60 +1,52 @@
 import type { Market, Signal, Position, Order, Account } from '../types';
-import { markets as mockMarkets, signals as mockSignals, positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
+import { positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
+async function api<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => 'Unknown error');
+    throw new Error(`${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
 
 export async function fetchMarkets(): Promise<Market[]> {
-  await delay(400);
-  return mockMarkets;
+  return api<Market[]>('/api/markets');
 }
 
 export async function fetchSignals(): Promise<Signal[]> {
-  await delay(300);
-  return mockSignals;
+  // Signals are generated on demand via /api/analyze for now.
+  return [];
 }
 
 export async function fetchPositions(): Promise<Position[]> {
-  await delay(300);
   return mockPositions;
 }
 
 export async function fetchOrders(): Promise<Order[]> {
-  await delay(300);
   return mockOrders;
 }
 
 export async function fetchAccount(): Promise<Account> {
-  await delay(200);
   return mockAccount;
 }
 
-export async function runAnalysis(symbol: string): Promise<Signal> {
-  await delay(1500);
-  const market = mockMarkets.find((m) => m.symbol === symbol);
-  if (!market) throw new Error('Market not found');
-  return {
-    id: `sig-${Date.now()}`,
-    symbol,
-    action: market.signal || 'HOLD',
-    confidence: market.confidence || 50,
-    size: 500,
-    entry: market.price,
-    stop: market.price * 0.95,
-    target: market.price * 1.08,
-    leverage: 3,
-    reasoning: `Agents analyzed ${symbol}. ${market.name} showed a ${market.signal?.toLowerCase() || 'hold'} setup with ${market.confidence}% confidence.`,
-    agents: ['Market', 'Funding', 'Risk'],
-    timestamp: new Date().toISOString(),
-    status: 'pending',
-  };
+export async function runAnalysis(symbol: string, strategy?: Record<string, unknown>): Promise<Signal> {
+  return api<Signal>('/api/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ symbol, strategy }),
+  });
 }
 
 export async function acceptSignal(id: string): Promise<void> {
-  await delay(300);
   console.log('Signal accepted:', id);
 }
 
 export async function rejectSignal(id: string): Promise<void> {
-  await delay(300);
   console.log('Signal rejected:', id);
 }
