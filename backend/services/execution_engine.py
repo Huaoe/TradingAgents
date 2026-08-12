@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Literal
 
 from backend.models.wallet import Wallet
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_store import SignalStore
 from backend.services.wallet_store import WalletStore
 
 # Hyperliquid taker fee at base tier.
 TAKER_FEE = 0.00045
+
+# Live trading is disabled unless explicitly enabled via environment variable.
+LIVE_TRADING_ENABLED = os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
 
 
 def _side_for_signal(action: str) -> str:
@@ -64,6 +69,7 @@ class ExecutionEngine:
         self.store = ExecutionStore()
         self.signal_store = SignalStore()
         self.wallet_store = WalletStore()
+        self.portfolio_engine = PortfolioEngine()
         self.client = HyperliquidClient()
 
     def execute(
@@ -95,6 +101,12 @@ class ExecutionEngine:
         entry = signal.get("entry") or market.get("price") or 0.0
         size_coin = size_usd / entry if entry else 0.0
         notional = size_usd
+
+        if mode == "live" and not LIVE_TRADING_ENABLED:
+            raise ValueError("Live trading is disabled. Set LIVE_TRADING=true to enable.")
+
+        risk_config = signal.get("meta", {}).get("riskConfig") or {}
+        self.portfolio_engine.can_open_position(wallet_id, symbol, notional, leverage, risk_config)
 
         order_id, position_id = self.store.generate_ids()
         now = datetime.now(timezone.utc).isoformat()
@@ -232,6 +244,8 @@ class ExecutionEngine:
             order["meta"]["closePrice"] = exit_price
             order["meta"]["netPnl"] = net_pnl
             self.store.update_order(order)
+
+        self.portfolio_engine.release_pnl(wallet_id, net_pnl)
 
         return {"position": self._normalize_position_side(position), "netPnl": round(net_pnl, 4)}
 

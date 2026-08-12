@@ -33,8 +33,13 @@ export async function fetchOrders(walletId?: string): Promise<Order[]> {
   return api<Order[]>(`/api/orders${qs}`);
 }
 
-export async function fetchAccount(): Promise<Account> {
-  return mockAccount;
+export async function fetchAccount(walletId?: string): Promise<Account> {
+  const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
+  try {
+    return await api<Account>(`/api/portfolio${qs}`);
+  } catch {
+    return mockAccount;
+  }
 }
 
 export interface ExecuteInput {

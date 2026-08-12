@@ -64,12 +64,20 @@ export interface Order {
 }
 
 export interface Account {
-  wallet: string;
+  walletId?: string;
+  wallet?: string;
+  mode?: string;
+  balance: number;
   totalValue: number;
   available: number;
   marginUsed: number;
   unrealizedPnl: number;
   dailyPnl: number;
+  totalNotional?: number;
+  openPositions?: number;
+  maxExposureSymbol?: string;
+  maxExposureNotional?: number;
+  maxLeverage?: number;
 }
 
 export type ExecutionMode = 'manual' | 'auto-confirm' | 'auto';

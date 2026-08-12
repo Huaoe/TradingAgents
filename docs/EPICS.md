@@ -13,8 +13,8 @@ This document breaks the product into high-level epics. Each epic maps to the [H
 | Epic 3 — Backtesting Lab with Statistics | Done (merged in PR #5) |
 | Epic 4 — Multi-Wallet Support | Done (merged in PR #6) |
 | Epic 5 — Signal Generation via TradingAgentsGraph | Done (merged in PR #7) |
-| Epic 6 — Auto-Trading & Execution Engine | In Progress |
-| Epic 7 — Portfolio, Positions & Risk Management | Not started |
+| Epic 6 — Auto-Trading & Execution Engine | Done (merged in PR #8) |
+| Epic 7 — Portfolio, Positions & Risk Management | In Progress |
 | Epic 8 — Alerts, Reflection & UI Polish | Not started |
 
 ---
