@@ -56,6 +56,7 @@ export function Scanner() {
               <th className="p-4 font-medium">24h</th>
               <th className="p-4 font-medium">Volume</th>
               <th className="p-4 font-medium">Funding</th>
+              <th className="p-4 font-medium">OI</th>
               <th className="p-4 font-medium">Signal</th>
               <th className="p-4 font-medium text-right">Action</th>
             </tr>
@@ -69,6 +70,7 @@ export function Scanner() {
                 <td className={`p-4 ${m.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{m.change24h >= 0 ? '+' : ''}{m.change24h}%</td>
                 <td className="p-4 text-gray-400">${(m.volume24h / 1e6).toFixed(1)}M</td>
                 <td className="p-4 text-gray-400">{m.funding !== undefined ? `${(m.funding * 100).toFixed(4)}%` : '-'}</td>
+                <td className="p-4 text-gray-400">{m.openInterest !== undefined ? `$${(m.openInterest * (m.price || 0) / 1e6).toFixed(1)}M` : '-'}</td>
                 <td className="p-4">{m.signal ? <Badge action={m.signal} /> : <span className="text-gray-500">—</span>}</td>
                 <td className="p-4 text-right">
                   <button

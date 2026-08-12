@@ -9,6 +9,8 @@ export interface Market {
   change24h: number;
   volume24h: number;
   funding?: number;
+  openInterest?: number;
+  maxLeverage?: number;
   signal?: SignalAction;
   confidence?: number;
 }
