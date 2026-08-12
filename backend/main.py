@@ -14,12 +14,14 @@ from pydantic import BaseModel
 
 from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.execution import ClosePositionRequest, ExecuteRequest
+from backend.models.portfolio import LiveModeRequest, PortfolioSummary
 from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
 from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
 from backend.services.strategy_store import StrategyStore
@@ -361,6 +363,28 @@ async def list_orders(wallet_id: str | None = None) -> list[dict[str, Any]]:
     try:
         engine = ExecutionEngine()
         return await asyncio.to_thread(engine.list_orders, wallet_id)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio")
+async def portfolio(wallet_id: str | None = None) -> PortfolioSummary:
+    try:
+        engine = PortfolioEngine()
+        result = await asyncio.to_thread(engine.summary, wallet_id)
+        return PortfolioSummary(**result)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/live")
+async def set_live_mode(payload: LiveModeRequest) -> dict[str, Any]:
+    try:
+        engine = PortfolioEngine()
+        await asyncio.to_thread(
+            engine.portfolio_store.set_live_enabled, payload.walletId, payload.enabled
+        )
+        return {"walletId": payload.walletId, "liveEnabled": payload.enabled}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

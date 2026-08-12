@@ -2,6 +2,7 @@ import type { Market, Signal, Account } from '../types';
 
 export const account: Account = {
   wallet: '0x71C...9A2',
+  balance: 12450.8,
   totalValue: 12450.8,
   available: 8735.5,
   marginUsed: 3715.3,
