@@ -1,6 +1,7 @@
-export function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+export function Card({ children, title, className = '' }: { children: React.ReactNode; title?: string; className?: string }) {
   return (
     <div className={`bg-[#11131a] border border-gray-800 rounded-xl p-5 ${className}`}>
+      {title && <h3 className="text-sm font-medium text-gray-200 mb-4">{title}</h3>}
       {children}
     </div>
   );

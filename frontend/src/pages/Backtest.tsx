@@ -1,0 +1,437 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+} from 'recharts';
+import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar } from 'lucide-react';
+import { Card } from '../components/Card';
+import { fetchStrategies, runBacktest, updateStrategy } from '../services/api';
+import type { Strategy, BacktestResult, BacktestInterval } from '../types';
+
+const intervals: { label: string; value: BacktestInterval }[] = [
+  { label: '1m', value: '1m' },
+  { label: '5m', value: '5m' },
+  { label: '15m', value: '15m' },
+  { label: '1h', value: '1h' },
+  { label: '4h', value: '4h' },
+  { label: '1d', value: '1d' },
+];
+
+function toInputDate(iso: string) {
+  return iso.slice(0, 10);
+}
+
+function formatPct(value: number) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
+}
+
+function formatUSD(value: number) {
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatNumber(value: number) {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+export function Backtest() {
+  const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [strategyId, setStrategyId] = useState('');
+  const [symbol, setSymbol] = useState('BTC');
+  const [interval, setInterval] = useState<BacktestInterval>('1h');
+  const end = useMemo(() => new Date().toISOString(), []);
+  const start = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString();
+  }, []);
+  const [startAt, setStartAt] = useState(toInputDate(start));
+  const [endAt, setEndAt] = useState(toInputDate(end));
+  const [initialBalance, setInitialBalance] = useState(10000);
+  const [makerFee, setMakerFee] = useState(0.0002);
+  const [takerFee, setTakerFee] = useState(0.00045);
+  const [slippagePct, setSlippagePct] = useState(0.0005);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [activated, setActivated] = useState(false);
+
+  useEffect(() => {
+    fetchStrategies().then((list) => {
+      setStrategies(list);
+      const saved = list.find((s) => !s.id.startsWith('template-'));
+      if (saved) setStrategyId(saved.id);
+    }).catch(() => setStrategies([]));
+  }, []);
+
+  async function handleRun(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    setResult(null);
+    setActivated(false);
+    try {
+      const res = await runBacktest({
+        symbol: symbol.toUpperCase(),
+        interval,
+        startAt: new Date(startAt).toISOString(),
+        endAt: new Date(endAt).toISOString(),
+        strategyId: strategyId || undefined,
+        initialBalance,
+        makerFee,
+        takerFee,
+        slippagePct,
+      });
+      setResult(res);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Backtest failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleActivate() {
+    if (!strategyId || !result) return;
+    try {
+      await updateStrategy(strategyId, { executionMode: 'manual' });
+      setActivated(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Activation failed');
+    }
+  }
+
+  const stats = result?.summary;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-white">Backtest Lab</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Run a strategy against historical Hyperliquid candles and compare to buy-and-hold.
+          </p>
+        </div>
+      </div>
+
+      <Card>
+        <form onSubmit={handleRun} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Strategy</label>
+            <select
+              value={strategyId}
+              onChange={(e) => setStrategyId(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            >
+              <option value="">Default (custom rules)</option>
+              {strategies.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Symbol</label>
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              placeholder="BTC"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Interval</label>
+            <select
+              value={interval}
+              onChange={(e) => setInterval(e.target.value as BacktestInterval)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            >
+              {intervals.map((i) => (
+                <option key={i.value} value={i.value}>
+                  {i.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400">Initial Balance (USD)</label>
+            <input
+              type="number"
+              value={initialBalance}
+              onChange={(e) => setInitialBalance(Number(e.target.value))}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400 flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Start Date
+            </label>
+            <input
+              type="date"
+              value={startAt}
+              onChange={(e) => setStartAt(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-gray-400 flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> End Date
+            </label>
+            <input
+              type="date"
+              value={endAt}
+              onChange={(e) => setEndAt(e.target.value)}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            />
+          </div>
+
+          <div className="lg:col-span-2 flex items-end">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="text-xs text-violet-400 hover:text-violet-300"
+            >
+              {showAdvanced ? 'Hide' : 'Show'} advanced parameters
+            </button>
+          </div>
+
+          {showAdvanced && (
+            <>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-400">Maker Fee</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  value={makerFee}
+                  onChange={(e) => setMakerFee(Number(e.target.value))}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-400">Taker Fee</label>
+                <input
+                  type="number"
+                  step="0.00001"
+                  value={takerFee}
+                  onChange={(e) => setTakerFee(Number(e.target.value))}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                />
+              </div>
+              <div className="space-y-1 lg:col-span-2">
+                <label className="text-xs font-medium text-gray-400">Slippage %</label>
+                <input
+                  type="number"
+                  step="0.0001"
+                  value={slippagePct}
+                  onChange={(e) => setSlippagePct(Number(e.target.value))}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                />
+              </div>
+            </>
+          )}
+
+          <div className="lg:col-span-4 flex items-center gap-3">
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              Run Backtest
+            </button>
+            {result && strategyId && (
+              <button
+                type="button"
+                onClick={handleActivate}
+                disabled={activated}
+                className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                {activated ? 'Activated' : 'Activate as Paper Strategy'}
+              </button>
+            )}
+          </div>
+        </form>
+
+        {error && (
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+      </Card>
+
+      {stats && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard
+              label="Total Return"
+              value={formatPct(stats.totalReturnPct)}
+              icon={stats.totalReturnPct >= 0 ? TrendingUp : TrendingDown}
+              positive={stats.totalReturnPct >= 0}
+            />
+            <StatCard
+              label="Benchmark Return"
+              value={formatPct(stats.benchmarkReturnPct)}
+              icon={BarChart3}
+              positive={stats.benchmarkReturnPct >= 0}
+            />
+            <StatCard label="Sharpe Ratio" value={formatNumber(stats.sharpeRatio)} icon={Activity} />
+            <StatCard
+              label="Max Drawdown"
+              value={formatPct(-stats.maxDrawdownPct)}
+              icon={TrendingDown}
+              positive={false}
+            />
+            <StatCard label="Win Rate" value={formatPct(stats.winRatePct)} icon={Percent} />
+            <StatCard label="Profit Factor" value={formatNumber(stats.profitFactor)} icon={BarChart3} />
+            <StatCard label="# Trades" value={String(stats.totalTrades)} icon={Activity} />
+            <StatCard
+              label="Final Balance"
+              value={formatUSD(stats.finalBalance)}
+              icon={DollarSign}
+              positive={stats.finalBalance >= stats.initialBalance}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card title="Equity Curve">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={result!.equity}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis
+                      dataKey="time"
+                      tickFormatter={(t) => new Date(t).toLocaleDateString()}
+                      stroke="#9ca3af"
+                      tick={{ fill: '#9ca3af', fontSize: 10 }}
+                      minTickGap={30}
+                    />
+                    <YAxis
+                      stroke="#9ca3af"
+                      tick={{ fill: '#9ca3af', fontSize: 10 }}
+                      tickFormatter={(v) => `$${Number(v).toLocaleString()}`}
+                    />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151' }}
+                      labelFormatter={(label) => new Date(String(label)).toLocaleString()}
+                      formatter={(value) => [formatUSD(Number(value)), 'Equity']}
+                    />
+                    <Line type="monotone" dataKey="equity" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+
+            <Card title="Drawdown">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={result!.drawdown}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                    <XAxis
+                      dataKey="time"
+                      tickFormatter={(t) => new Date(t).toLocaleDateString()}
+                      stroke="#9ca3af"
+                      tick={{ fill: '#9ca3af', fontSize: 10 }}
+                      minTickGap={30}
+                    />
+                    <YAxis
+                      stroke="#9ca3af"
+                      tick={{ fill: '#9ca3af', fontSize: 10 }}
+                      tickFormatter={(v) => `${v}%`}
+                    />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151' }}
+                      labelFormatter={(label) => new Date(String(label)).toLocaleString()}
+                      formatter={(value) => [`${value}%`, 'Drawdown']}
+                    />
+                    <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </Card>
+          </div>
+
+          <Card title={`Trades (${result!.trades.length})`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-gray-400 border-b border-gray-800">
+                    <th className="text-left py-2 px-2">Entry</th>
+                    <th className="text-left py-2 px-2">Exit</th>
+                    <th className="text-left py-2 px-2">Side</th>
+                    <th className="text-right py-2 px-2">Entry $</th>
+                    <th className="text-right py-2 px-2">Exit $</th>
+                    <th className="text-right py-2 px-2">Size</th>
+                    <th className="text-right py-2 px-2">Net PnL</th>
+                    <th className="text-right py-2 px-2">Return</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result!.trades.slice(0, 50).map((t, i) => (
+                    <tr key={i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                      <td className="py-2 px-2 text-gray-300">{new Date(t.entryTime).toLocaleString()}</td>
+                      <td className="py-2 px-2 text-gray-300">{new Date(t.exitTime).toLocaleString()}</td>
+                      <td className="py-2 px-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            t.side === 'LONG' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                          }`}
+                        >
+                          {t.side}
+                        </span>
+                      </td>
+                      <td className="py-2 px-2 text-right text-gray-300">{t.entryPrice.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-right text-gray-300">{t.exitPrice.toLocaleString()}</td>
+                      <td className="py-2 px-2 text-right text-gray-300">{t.sizeCoin.toFixed(6)}</td>
+                      <td className={`py-2 px-2 text-right font-medium ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {formatUSD(t.netPnl)}
+                      </td>
+                      <td className={`py-2 px-2 text-right ${t.returnPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {formatPct(t.returnPct)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  positive,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+  positive?: boolean;
+}) {
+  const color =
+    positive === undefined ? 'text-violet-400' : positive ? 'text-emerald-400' : 'text-red-400';
+  return (
+    <div className="bg-[#11131a] border border-gray-800 rounded-xl p-4">
+      <div className="flex items-center gap-2 text-gray-400 mb-1">
+        <Icon className="w-4 h-4" />
+        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
+      </div>
+      <div className={`text-xl font-semibold ${color}`}>{value}</div>
+    </div>
+  );
+}

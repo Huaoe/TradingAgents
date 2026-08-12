@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog } from '../types';
+import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult } from '../types';
 import { positions as mockPositions, orders as mockOrders, account as mockAccount } from '../data/mockData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -71,6 +71,13 @@ export async function updateStrategy(id: string, strategy: StrategyInput): Promi
 
 export async function deleteStrategy(id: string): Promise<void> {
   await api<{ deleted: boolean }>(`/api/strategies/${id}`, { method: 'DELETE' });
+}
+
+export async function runBacktest(input: BacktestInput): Promise<BacktestResult> {
+  return api<BacktestResult>('/api/backtest', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export async function acceptSignal(id: string): Promise<void> {
