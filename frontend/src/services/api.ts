@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput } from '../types';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput } from '../types';
 import { account as mockAccount } from '../data/mockData';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -174,4 +174,33 @@ export async function updateWallet(id: string, wallet: WalletUpdateInput): Promi
 
 export async function deleteWallet(id: string): Promise<void> {
   await api<{ deleted: boolean }>(`/api/wallets/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchAlerts(walletId?: string, unreadOnly = false): Promise<Alert[]> {
+  const qs = new URLSearchParams();
+  if (walletId) qs.set('wallet_id', walletId);
+  if (unreadOnly) qs.set('unread_only', 'true');
+  return api<Alert[]>(`/api/alerts?${qs.toString()}`);
+}
+
+export async function fetchUnreadAlertCount(walletId?: string): Promise<number> {
+  const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
+  const res = await api<{ unread: number }>(`/api/alerts/unread${qs}`);
+  return res.unread;
+}
+
+export async function markAlertRead(alertId: string): Promise<void> {
+  await api<{ read: boolean }>(`/api/alerts/${alertId}/read`, { method: 'POST' });
+}
+
+export async function markAllAlertsRead(walletId?: string): Promise<void> {
+  const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
+  await api<{ read: boolean }>(`/api/alerts/read-all${qs}`, { method: 'POST' });
+}
+
+export async function fetchJournal(walletId?: string, limit = 100): Promise<JournalEntry[]> {
+  const qs = new URLSearchParams();
+  if (walletId) qs.set('wallet_id', walletId);
+  qs.set('limit', String(limit));
+  return api<JournalEntry[]>(`/api/journal?${qs.toString()}`);
 }

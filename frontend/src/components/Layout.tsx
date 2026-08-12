@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Radio, Wallet as WalletIcon, Bot, Cpu, LineChart, Settings } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Radio, Wallet as WalletIcon, Bot, Cpu, LineChart, Settings, Bell, BookOpen } from 'lucide-react';
 import { useWallet } from '../context/WalletContext';
+import { fetchUnreadAlertCount } from '../services/api';
 
 const nav = [
   { path: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -9,6 +11,8 @@ const nav = [
   { path: '/backtest', label: 'Backtest', icon: LineChart },
   { path: '/signals', label: 'Signals', icon: Radio },
   { path: '/positions', label: 'Positions', icon: WalletIcon },
+  { path: '/alerts', label: 'Alerts', icon: Bell },
+  { path: '/journal', label: 'Journal', icon: BookOpen },
   { path: '/wallets', label: 'Wallets', icon: Settings },
 ];
 
@@ -17,9 +21,23 @@ function mask(address: string) {
   return `${address.slice(0, 4)}...${address.slice(-4)}`;
 }
 
+function isActive(path: string, pathname: string) {
+  if (path === '/') return pathname === '/';
+  return pathname.startsWith(path);
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   const { wallets, selectedWallet, setSelectedWallet, loading } = useWallet();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    fetchUnreadAlertCount(selectedWallet?.id).then(setUnreadCount).catch(() => 0);
+    const interval = setInterval(() => {
+      fetchUnreadAlertCount(selectedWallet?.id).then(setUnreadCount).catch(() => 0);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [selectedWallet]);
 
   return (
     <div className="flex h-screen bg-[#0b0d12] text-gray-100">
@@ -31,19 +49,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <nav className="space-y-1">
           {nav.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.path;
+            const active = isActive(item.path, pathname);
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   active
                     ? 'bg-violet-500/10 text-violet-300 border border-violet-500/20'
                     : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800/50'
                 }`}
               >
-                <Icon className="w-4 h-4" />
-                {item.label}
+                <span className="flex items-center gap-3">
+                  <Icon className="w-4 h-4" />
+                  {item.label}
+                </span>
+                {item.label === 'Alerts' && unreadCount > 0 && (
+                  <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
               </Link>
             );
           })}

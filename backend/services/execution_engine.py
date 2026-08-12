@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from backend.models.wallet import Wallet
+from backend.services.alert_engine import AlertEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.portfolio_engine import PortfolioEngine
@@ -70,6 +71,7 @@ class ExecutionEngine:
         self.signal_store = SignalStore()
         self.wallet_store = WalletStore()
         self.portfolio_engine = PortfolioEngine()
+        self.alert_engine = AlertEngine()
         self.client = HyperliquidClient()
 
     def execute(
@@ -106,7 +108,13 @@ class ExecutionEngine:
             raise ValueError("Live trading is disabled. Set LIVE_TRADING=true to enable.")
 
         risk_config = signal.get("meta", {}).get("riskConfig") or {}
-        self.portfolio_engine.can_open_position(wallet_id, symbol, notional, leverage, risk_config)
+        try:
+            self.portfolio_engine.can_open_position(
+                wallet_id, symbol, notional, leverage, risk_config
+            )
+        except ValueError as exc:
+            self.alert_engine.risk_violation(str(exc), wallet_id=wallet_id)
+            raise
 
         order_id, position_id = self.store.generate_ids()
         now = datetime.now(timezone.utc).isoformat()
@@ -179,6 +187,7 @@ class ExecutionEngine:
             "closedAt": None,
         }
         self.store.create_position(position)
+        self.alert_engine.position_opened(position, wallet_id)
         return {"order": order, "position": self._normalize_position_side(position)}
 
     def close_position(
@@ -246,6 +255,8 @@ class ExecutionEngine:
             self.store.update_order(order)
 
         self.portfolio_engine.release_pnl(wallet_id, net_pnl)
+        self.alert_engine.position_closed(position, net_pnl, wallet_id)
+        self.alert_engine.journal_closed_trade(position, order, net_pnl, gross, fees, wallet_id)
 
         return {"position": self._normalize_position_side(position), "netPnl": round(net_pnl, 4)}
 
