@@ -26,8 +26,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 6 — Auto-Trading & Execution Engine (Paper) | Epic 6 | Done (merged in PR #8) |
 | Sprint 7 — Live Trading & Risk Guardrails | Epic 7 | Done (merged in PR #9) |
 | Sprint 8 — Portfolio, Positions & Risk Dashboard | Epic 7 | Done |
-| Sprint 9 — Alerts, Reflection & UI Polish | Epic 8 | In Progress |
-| Sprint 10 — Stabilization & Launch Prep | — | Not started |
+| Sprint 9 — Alerts, Reflection & UI Polish | Epic 8 | Done (merged in PR #10) |
+| Sprint 10 — Stabilization & Launch Prep | — | In Progress |
 
 ---
 

@@ -1,0 +1,111 @@
+# Hyperliquid Trading Agent — Local Runbook
+
+This runbook explains how to install, run, and stop the app locally for personal paper/live trading.
+
+## Prerequisites
+
+- Python 3.10+
+- Node.js 20+
+- Git
+- (Optional) Docker + Docker Compose for containerized launch
+
+## 1. Clone and install
+
+```bash
+git clone https://github.com/Huaoe/TradingAgents.git
+cd TradingAgents
+pip install -e ".[dev]"
+cd frontend
+npm install
+```
+
+## 2. Configure environment
+
+Copy `.env.example` to `.env` and fill in the providers you use:
+
+```bash
+cp .env.example .env
+```
+
+Set at least one LLM key if you want real `TradingAgentsGraph` signal generation, e.g.:
+
+```bash
+OPENAI_API_KEY=sk-...
+```
+
+The app defaults to a deterministic signal engine when no LLM key is set, which is fine for paper-trade testing.
+
+Optional trading safety variables:
+
+```bash
+# Disable live trading by default; only set to true when you intend real orders.
+LIVE_TRADING=false
+```
+
+## 3. Run in development
+
+Two terminals are needed:
+
+**Terminal 1 — backend:**
+
+```bash
+python -m backend.main
+```
+
+The FastAPI server starts at `http://localhost:8000`.
+
+**Terminal 2 — frontend:**
+
+```bash
+cd frontend
+npm run dev
+```
+
+The Vite dev server starts at `http://localhost:5173` and proxies `/api` to the backend.
+
+Open `http://localhost:5173` in your browser.
+
+## 4. First-time setup
+
+1. Go to **Wallets** and add one or more Hyperliquid wallets. You can add a paper/test wallet with a dummy address and private key for testing.
+2. Select an active wallet from the sidebar.
+3. Go to **Scanner**, pick a symbol, and click **Analyze** to generate your first signal.
+4. Accept the signal on the **Signals** page — it will execute a paper trade.
+5. View the position on **Positions** and the portfolio summary on the **Dashboard**.
+
+## 5. Run with Docker
+
+Build and start the combined web image:
+
+```bash
+docker compose -f docker-compose.web.yml up --build -d
+```
+
+The app is then available at `http://localhost:8000` (backend serves the built frontend).
+
+Stop:
+
+```bash
+docker compose -f docker-compose.web.yml down
+```
+
+## 6. Important safety reminders
+
+- The app starts in **paper mode**. No real orders are sent.
+- Live trading requires `LIVE_TRADING=true` in the environment, a real wallet private key, and `mode=live` on the trade request.
+- Never commit `.env`, wallet private keys, or `backend/data/*` to Git.
+- Test with small size for at least 7 days in paper mode before moving real capital.
+
+## 7. Lint and build
+
+```bash
+ruff check backend/ && ruff format backend/
+cd frontend
+npm run build && npm run lint
+```
+
+## 8. Troubleshooting
+
+- **Port 8000 already in use:** set `PORT=8001` and update `frontend/.env` (`VITE_API_URL=http://localhost:8001`).
+- **No signals appearing:** check that at least one LLM key is set or rely on the deterministic engine; verify `python -m backend.main` is running.
+- **Database errors:** delete `backend/data/*.db` files to reset state (this loses paper positions/alerts).
