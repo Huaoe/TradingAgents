@@ -4,6 +4,21 @@ This document breaks the product into high-level epics. Each epic maps to the [H
 
 ---
 
+## Progress
+
+| Epic | Status |
+|---|---|
+| Epic 1 — Hyperliquid Data Adapter | Done |
+| Epic 2 — Strategy Library & Builder | In Progress |
+| Epic 3 — Backtesting Lab with Statistics | Not started |
+| Epic 4 — Multi-Wallet Support | Not started |
+| Epic 5 — Signal Generation via TradingAgentsGraph | Not started |
+| Epic 6 — Auto-Trading & Execution Engine | Not started |
+| Epic 7 — Portfolio, Positions & Risk Management | Not started |
+| Epic 8 — Alerts, Reflection & UI Polish | Not started |
+
+---
+
 ## Epic 1: Hyperliquid Data Adapter
 
 Add a Hyperliquid vendor so `TradingAgents` can analyze perp/spot markets with native Hyperliquid data instead of relying on Yahoo spot data.
