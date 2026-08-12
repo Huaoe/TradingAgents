@@ -1,6 +1,6 @@
 # User Stories — Hyperliquid Trading Agent App
 
-Each user story follows the format:
+Each user story follows:
 
 > **As a** [persona], **I want** [feature], **so that** [benefit].
 
@@ -12,28 +12,29 @@ Acceptance criteria use:
 
 ---
 
-## Epic 1: Hyperliquid Data & Market Foundation
+## Epic 1: Hyperliquid Data Adapter
 
 ### US-1.1 View live market scanner
 **As a** trader, **I want** to see a list of Hyperliquid perp and spot markets with price, 24h change, funding, and volume, **so that** I can identify what to analyze.
 
 **Acceptance Criteria**
-- Given I am on the `/scanner` page, when the page loads, then I see a table with Symbol, Name, Type, Price, 24h, Volume, Funding, and Signal columns.
-- Given the app is connected to Hyperliquid, when market data updates, then prices refresh within 5 seconds.
+- Given I am on `/scanner`, when the page loads, then I see Symbol, Name, Type, Price, 24h, Volume, Funding, and Signal columns.
+- Given the backend is connected to Hyperliquid Info API, when prices update, then the table refreshes within 5 seconds.
 
-### US-1.2 Analyze a single market
-**As a** trader, **I want** to click "Analyze" on a market row, **so that** the multi-agent pipeline runs for that symbol.
-
-**Acceptance Criteria**
-- Given I click "Analyze" for SOL, when the analysis completes, then a signal card appears with action, confidence, size, entry, stop, target, and reasoning.
-- Given the analysis fails, when an error occurs, then I see a clear error message without crashing the page.
-
-### US-1.3 View wallet balance
-**As a** trader, **I want** to see my Hyperliquid wallet balance and margin, **so that** I know how much capital is available.
+### US-1.2 Analyze a single market with Hyperliquid data
+**As a** trader, **I want** to click "Analyze" on a market row, **so that** `TradingAgentsGraph` runs with Hyperliquid-native data.
 
 **Acceptance Criteria**
-- Given I have connected a wallet, when I open the dashboard, then I see total value, available balance, and margin used.
-- Given the wallet balance changes, when the next sync runs, then the dashboard updates within 10 seconds.
+- Given I click "Analyze" for SOL, when the analysis completes, then the backend calls `TradingAgentsGraph.run(asset_type="crypto", symbol="SOL", ...)`.
+- Given the signal is produced, when it reaches the frontend, then it displays action, confidence, size, entry, stop, target, leverage, and reasoning.
+- Given the analysis fails (no data or LLM error), when an error occurs, then I see a clear error message without crashing the page.
+
+### US-1.3 Register Hyperliquid as a data vendor
+**As a** a developer, **I want** `dataflows/interface.py` to route market-data calls to a Hyperliquid implementation, **so that** the agent graph can consume perp/spot data transparently.
+
+**Acceptance Criteria**
+- Given `default_config.py` sets `core_stock_apis: "hyperliquid"`, when `get_stock_data` is called, then `tradingagents.dataflows.hyperliquid.get_stock_data` is invoked.
+- Given `get_stock_data` is called, when the symbol is `BTC`, then it requests Hyperliquid candles for `BTC` and returns a CSV string in the same format as the yfinance vendor.
 
 ---
 
@@ -47,10 +48,10 @@ Acceptance criteria use:
 - Given I click a template, when the builder opens, then the form is pre-filled with sensible defaults.
 
 ### US-2.2 Create a custom strategy
-**As a** trader, **I want** to select markets, agents, LLM models, risk parameters, and execution mode, **so that** I can define my own strategy.
+**As a** trader, **I want** to select markets, agents, LLM provider/model, risk parameters, and execution mode, **so that** I can define my own strategy.
 
 **Acceptance Criteria**
-- Given I choose "Custom", when I fill the form, then I can select at least one market, one agent, one LLM provider, max allocation, max leverage, stop-loss, and execution mode.
+- Given I choose "Custom", when I fill the form, then I can select at least one market, one agent, one LLM provider/model from the upstream catalog, max allocation, max leverage, stop-loss, and execution mode.
 - Given I click "Save", when validation passes, then the strategy appears in my saved list.
 - Given I omit a required field, when I click "Save", then I see a validation error.
 
@@ -69,54 +70,30 @@ Acceptance criteria use:
 
 ---
 
-## Epic 3: Multi-Wallet Support
+## Epic 3: Backtesting Lab with Statistics
 
-### US-3.1 Add a new wallet
-**As a** trader, **I want** to add a Hyperliquid API wallet with a label, **so that** I can trade from multiple accounts.
-
-**Acceptance Criteria**
-- Given I navigate to `/wallets`, when I click "Add Wallet", then I can enter a label, wallet address, and encrypted API secret.
-- Given I submit the form, when the wallet is saved, then it appears in the wallet list.
-
-### US-3.2 Switch active wallet
-**As a** trader, **I want** to switch the active wallet from any page, **so that** I can quickly trade from a different account.
-
-**Acceptance Criteria**
-- Given a wallet switcher in the sidebar/header, when I select a wallet, then the dashboard, positions, and orders update to that wallet.
-- Given a strategy is assigned to a wallet, when I switch wallet, then strategy cards still show their assigned wallet.
-
-### US-3.3 View combined and per-wallet PnL
-**As a** trader, **I want** to see both combined and per-wallet PnL, **so that** I can compare account performance.
-
-**Acceptance Criteria**
-- Given I am on the dashboard, when I view the PnL section, then I see a combined total and individual wallet breakdowns.
-
----
-
-## Epic 4: Backtesting Lab with Statistics
-
-### US-4.1 Run a backtest
+### US-3.1 Run a backtest
 **As a** trader, **I want** to select a strategy, date range, and initial balance, then run a backtest, **so that** I can validate the strategy historically.
 
 **Acceptance Criteria**
 - Given I am on `/backtest`, when I choose a strategy and date range and click "Run", then the backtest executes and results load.
 - Given the backtest is running, when it is in progress, then I see a loading indicator.
 
-### US-4.2 View headline statistics at the top
+### US-3.2 View headline statistics at the top
 **As a** trader, **I want** the most important backtest statistics displayed prominently at the top of the page, **so that** I can assess performance at a glance.
 
 **Acceptance Criteria**
 - Given the backtest results load, when I view the page, then I see cards for Total Return, Sharpe, Max Drawdown, Win Rate, Profit Factor, # Trades, Avg Trade, and Benchmark Return at the top, above the fold.
 - Given the statistic is negative, when displayed, then it is colored red; positive values are green.
 
-### US-4.3 Inspect equity curve and trades
+### US-3.3 Inspect equity curve and trades
 **As a** trader, **I want** to see the equity curve, drawdown, and a trade list, **so that** I understand when and why the strategy won or lost.
 
 **Acceptance Criteria**
 - Given the backtest completes, when I scroll below the statistics, then I see an equity curve chart, drawdown chart, and a sortable trades table.
 - Given I click a trade row, when the details open, then I see entry, exit, size, PnL, duration, and reasoning.
 
-### US-4.4 Activate a strategy from a backtest
+### US-3.4 Activate a strategy from a backtest
 **As a** trader, **I want** to promote a successful backtest to a paper or live strategy, **so that** I do not have to re-enter parameters.
 
 **Acceptance Criteria**
@@ -124,27 +101,52 @@ Acceptance criteria use:
 
 ---
 
-## Epic 5: Signal Generation & Agent Pipeline
+## Epic 4: Multi-Wallet Support
 
-### US-5.1 Generate a Hyperliquid-aware signal
-**As a** trader, **I want** the multi-agent pipeline to use Hyperliquid perp/spot data, **so that** signals are relevant to crypto markets.
-
-**Acceptance Criteria**
-- Given I run a strategy for SOL-PERP, when the signal is generated, then it includes funding-rate and OI context from Hyperliquid.
-- Given the signal is produced, when it is displayed, then it contains action, confidence, size, entry, stop, target, leverage, and reasoning.
-
-### US-5.2 Normalize signal output for execution
-**As a** the execution engine, **I want** signals in a strict schema, **so that** I can place orders without parsing free text.
+### US-4.1 Add a new wallet
+**As a** trader, **I want** to add a Hyperliquid API wallet with a label, **so that** I can trade from multiple accounts.
 
 **Acceptance Criteria**
-- Given a signal is produced, when it reaches the execution service, then all required fields (action, symbol, size, entry, stop, target, walletId, strategyId) are present and typed.
-- Given a signal is missing a required field, when validation runs, then it is rejected and logged.
+- Given I navigate to `/wallets`, when I click "Add Wallet", then I can enter a label, wallet address, and encrypted API secret.
+- Given I submit the form, when the wallet is saved, then it appears in the wallet list.
 
-### US-5.3 View agent reasoning
-**As a** trader, **I want** to see each agent's contribution to a signal, **so that** I understand the rationale.
+### US-4.2 Switch active wallet
+**As a** trader, **I want** to switch the active wallet from any page, **so that** I can quickly trade from a different account.
 
 **Acceptance Criteria**
-- Given I open a signal card, when I expand "Agent Reports", then I see the report from each enabled analyst.
+- Given a wallet switcher in the sidebar/header, when I select a wallet, then the dashboard, positions, and orders update to that wallet.
+- Given a strategy is assigned to a wallet, when I switch wallet, then strategy cards still show their assigned wallet.
+
+### US-4.3 View combined and per-wallet PnL
+**As a** trader, **I want** to see both combined and per-wallet PnL, **so that** I can compare account performance.
+
+**Acceptance Criteria**
+- Given I am on the dashboard, when I view the PnL section, then I see a combined total and individual wallet breakdowns.
+
+---
+
+## Epic 5: Signal Generation via TradingAgentsGraph
+
+### US-5.1 Run the upstream graph for crypto
+**As a** trader, **I want** `TradingAgentsGraph` to run in crypto mode for a Hyperliquid market, **so that** signals are based on relevant perp/spot data.
+
+**Acceptance Criteria**
+- Given I request a signal for `BTC` with `asset_type="crypto"`, when the graph runs, then it uses the Hyperliquid vendor and excludes the fundamentals analyst.
+- Given the graph completes, when the result is returned, then it contains a `PortfolioDecision` and a `TraderProposal`.
+
+### US-5.2 Display structured signal output
+**As a** trader, **I want** to see the typed `PortfolioDecision`, `TraderProposal`, and `SentimentReport` in the UI, **so that** I can understand the agents' decision and sentiment.
+
+**Acceptance Criteria**
+- Given I open a signal card, when it renders, then I see the rating (`Buy / Overweight / Hold / Underweight / Sell`), confidence, size, leverage, entry, stop, target, and reasoning.
+- Given a `SentimentReport` exists, when the card renders, then it shows the sentiment band, score, and confidence.
+
+### US-5.3 Normalize signal for execution
+**As a** the execution engine, **I want** the signal converted to a strict order schema, **so that** I can place orders without parsing free text.
+
+**Acceptance Criteria**
+- Given a `PortfolioDecision` and `TraderProposal`, when the signal service processes them, then it returns an object with `action`, `symbol`, `size`, `entry`, `stop`, `target`, `leverage`, `walletId`, `strategyId`.
+- Given a required field is missing, when validation runs, then the signal is rejected and logged.
 
 ---
 

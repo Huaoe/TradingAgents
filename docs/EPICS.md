@@ -1,109 +1,109 @@
 # Epics — Hyperliquid Trading Agent App
 
-This document breaks the product into high-level epics. Each epic maps to the [Hyperliquid Trading Agent App PRD](./hyperliquid-trading-agent-app-prd.md).
+This document breaks the product into high-level epics. Each epic maps to the [Hyperliquid Trading Agent App PRD](./hyperliquid-trading-agent-app-prd.md), rewritten to reuse upstream `TradingAgents` v0.3.1 features.
 
 ---
 
-## Epic 1: Hyperliquid Data & Market Foundation
+## Epic 1: Hyperliquid Data Adapter
 
-Build the connection to Hyperliquid so the app can read market data, wallets, and positions.
+Add a Hyperliquid vendor so `TradingAgents` can analyze perp/spot markets with native Hyperliquid data instead of relying on Yahoo spot data.
 
 **Scope**
-- Hyperliquid `Info` and `Exchange` SDK integration.
-- Fetch perp/spot prices, candles, order book, funding, open interest, liquidations.
-- Local caching layer for candles and market metadata.
-- Wallet balance and `clearinghouseState` sync.
+- New `tradingagents/dataflows/hyperliquid.py` implementing the data functions the agents call:
+  - `get_stock_data` (candles)
+  - `get_indicators` (OHLCV-derived technicals)
+  - `get_funding`, `get_open_interest`, `get_orderbook`, `get_recent_trades`, `get_liquidations`
+- Register `hyperliquid` in `dataflows/interface.py` and `default_config.py`.
+- Caching layer for Info API calls.
+- Symbol normalization bridge (`BTC` <-> `BTC-USD`).
 
 **Definition of Done**
-- Backend endpoints return live market data for BTC, ETH, SOL and at least 5 spot pairs.
-- Market data latency < 5 seconds from Hyperliquid.
-- Frontend Market Scanner renders live mid prices, 24h change, and funding.
+- `TradingAgentsGraph.run(asset_type="crypto", symbol="BTC", data_vendors={..."hyperliquid"})` runs end-to-end using Hyperliquid data.
+- Market Scanner in the frontend displays live Hyperliquid prices, 24h change, volume, and funding.
+- Candles and funding data are cached locally and refresh in < 5s.
 
 ---
 
 ## Epic 2: Strategy Library & Builder
 
-Let the user choose from predefined strategy templates or build a custom strategy from scratch.
+Let the user choose from predefined strategy templates or build a custom strategy, and persist it.
 
 **Scope**
 - Predefined templates: Momentum Breakout, Mean Reversion, Funding Rate Arb, HYPE Delta Neutral, Custom.
-- Strategy parameter form: markets, agents, LLM config, risk config, execution mode, schedule.
-- Save, clone, version, and delete strategies.
-- Template marketplace seed (local JSON).
+- Strategy form: markets, agents, LLM provider/model (from `model_catalog.py`), risk config, execution mode, schedule, assigned wallet.
+- Save, clone, version, delete strategies.
+- Frontend `/strategies` and `/strategies/:id`.
 
 **Definition of Done**
 - User can create a strategy from a template in < 2 minutes.
-- All parameters are persisted and editable.
-- Frontend `/strategies` page lists templates and saved strategies.
+- Strategy model is persisted and editable.
+- The builder's LLM dropdown is populated from `tradingagents.llm_clients.model_catalog`.
 
 ---
 
-## Epic 3: Multi-Wallet Support
+## Epic 3: Backtesting Lab with Statistics
 
-Support multiple Hyperliquid wallets/accounts with per-wallet allocation and security.
+Provide a backtest interface that shows headline statistics at the top and detailed analysis below.
 
 **Scope**
-- Add, label, and remove wallets.
-- Encrypted storage of API-wallet secrets.
-- Per-wallet balances, positions, and PnL.
-- Assign a default wallet per strategy.
+- Run a strategy against historical candles (Hyperliquid or yfinance fallback).
+- Simulate maker/taker fees, slippage, and funding for perps.
+- Compute and display at the top: Total Return, Sharpe, Max Drawdown, Win Rate, Profit Factor, # Trades, Avg Trade, Benchmark Return.
+- Equity curve, drawdown chart, monthly heatmap, trade list.
+- "Activate as Strategy" after successful backtest.
 
 **Definition of Done**
-- User can add ≥2 wallets and switch between them in < 3 clicks.
+- Backtest completes in < 30s for 1 year of daily data.
+- Statistics cards are visible at the top of `/backtest` without scrolling.
+- Results are reproducible for the same strategy + date range.
+
+---
+
+## Epic 4: Multi-Wallet Support
+
+Support multiple Hyperliquid wallets/accounts with encrypted secrets and per-wallet views.
+
+**Scope**
+- Wallet CRUD with labels and encrypted API-wallet secrets.
+- Wallet switcher in the UI.
+- Per-wallet balances, positions, PnL.
+- Default wallet per strategy.
+
+**Definition of Done**
+- User can add >=2 wallets and switch in < 3 clicks.
 - Private keys are never stored in plain text.
 - Dashboard shows combined and per-wallet PnL.
 
 ---
 
-## Epic 4: Backtesting Lab with Statistics
+## Epic 5: Signal Generation via TradingAgentsGraph
 
-Provide a backtest interface that shows headline statistics at the top and detailed analysis below.
-
-**Scope**
-- Run a strategy against historical candles.
-- Compute: Total Return, Sharpe, Max Drawdown, Win Rate, Profit Factor, # Trades, Avg Trade, Benchmark Return.
-- Display statistics header cards at the top of the page.
-- Equity curve, drawdown chart, trade list, monthly returns.
-- Walk-forward / out-of-sample selector.
-- "Activate as Strategy" from a successful backtest.
-
-**Definition of Done**
-- Backtest completes in < 30s for 1 year of daily data.
-- Statistics cards are visible without scrolling.
-- Results are reproducible for the same strategy + date range.
-
----
-
-## Epic 5: Signal Generation & Agent Pipeline
-
-Run the TradingAgents multi-agent graph on Hyperliquid markets and produce normalized signals.
+Run the upstream multi-agent graph on Hyperliquid markets and expose the typed decisions in the UI.
 
 **Scope**
-- Hyperliquid data adapter inside `TradingAgents`.
-- New perp/spot analysts and prompts.
-- Debate + risk manager flow.
-- Signal output normalization: action, confidence, size, entry, stop, target, leverage, reasoning.
-- Feed signals into the frontend Signal Feed.
+- FastAPI endpoint that calls `TradingAgentsGraph.run(asset_type="crypto", ...)`.
+- Map the upstream `PortfolioDecision` / `TraderProposal` to the app's `Signal` schema.
+- Display `SentimentReport` band/score in the signal feed.
+- Handle errors gracefully (no data, LLM failure).
 
 **Definition of Done**
 - Signal generation < 30s per market.
-- Signal schema matches the execution engine input.
-- 90%+ of signals are parseable without manual intervention.
+- UI shows `Buy / Overweight / Hold / Underweight / Sell`, confidence, entry, stop, target, leverage, reasoning.
+- 90%+ of runs produce parseable decisions.
 
 ---
 
 ## Epic 6: Auto-Trading & Execution Engine
 
-Convert signals into orders and execute them automatically or with user confirmation.
+Convert signals into Hyperliquid orders and execute them manually, semi-automatically, or fully automatically.
 
 **Scope**
-- Manual, auto-confirm, and fully automatic execution modes.
-- Scheduled and event-based strategy runs.
+- Manual, auto-confirm, and fully automatic execution modes per strategy.
+- Schedule and cooldown guards.
 - Order builder for perp/spot market and limit orders.
-- Hyperliquid order signing and submission.
+- Hyperliquid order signing/submission via `hyperliquid-python-sdk`.
 - Bracket orders (stop-loss / take-profit).
-- Trade cooldown, daily trade limit, slippage guard.
-- Activity log.
+- Slippage, daily trade limit, and wallet allocation guards.
 
 **Definition of Done**
 - Paper-trade execution success rate > 95%.
@@ -136,9 +136,9 @@ Notify the user, let the agents learn, and finish the UX.
 
 **Scope**
 - In-app, email, Telegram, Discord alerts.
-- Reflection: feed closed-trade PnL back to `reflect_and_remember()`.
-- Memory browser.
-- Mobile-responsive UI, dark/light mode, onboarding flow.
+- Feed closed-trade PnL back to `reflect_and_remember()`.
+- Memory browser (`/memory`).
+- Mobile-responsive UI, dark/light mode, onboarding.
 - Not-financial-advice disclaimers and compliance prompts.
 
 **Definition of Done**

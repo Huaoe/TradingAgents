@@ -1,6 +1,6 @@
 # Development Plan — Hyperliquid Trading Agent App
 
-This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) into a development roadmap. It assumes one full-stack engineer (you) working in focused sprints.
+This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) into a development roadmap. It is aligned with upstream `TradingAgents` v0.3.1 so we reuse crypto asset mode, structured schemas, multi-provider LLM clients, and the existing test/CI setup.
 
 ---
 
@@ -19,7 +19,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 |---|---|
 | Frontend | Vite + React + TypeScript + Tailwind CSS + Recharts |
 | Backend | FastAPI + Python 3.11+ |
-| Agent Engine | `TradingAgents` (LangGraph) + custom Hyperliquid analysts |
+| Agent Engine | `TradingAgents` (upstream `TradingAgentsGraph`, `AssetType.CRYPTO`, structured schemas) |
 | Exchange | `hyperliquid-python-sdk` |
 | Database | SQLite for local MVP; migrate to PostgreSQL if hosted |
 | Secrets | `python-keyring` or file-encrypted vault (no cloud secrets in MVP) |
@@ -29,45 +29,48 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ## Sprint Map
 
-### Sprint 0 — Foundation (Days 1–3)
-**Goal:** Get the repo and the existing React frontend ready for feature work.
+### Sprint 0 — Repo Alignment (Days 1–2)
+**Goal:** Understand and wire into the new upstream capabilities.
 
 **Stories**
-- US-1.1 (partial): Improve market scanner with loading states.
-- US-8.3 (partial): Make sidebar responsive.
+- Read `cli/models.py`, `cli/utils.py`, `tradingagents/agents/schemas.py`, `tradingagents/llm_clients/model_catalog.py`, `dataflows/interface.py`.
+- Verify `TradingAgentsGraph` can run on a crypto symbol (`BTC-USD`) in `localhost`.
 
 **Tasks**
-1. Decide if the app stays local-only or will need a FastAPI backend now.
-2. Add route placeholders for `/strategies`, `/backtest`, `/wallets`.
-3. Set up backend folder structure if not already present.
-4. Define shared TypeScript types for Strategy, Wallet, BacktestResult.
-5. Add `README.md` for `frontend/` with run instructions.
+1. Run `pytest` to confirm the upstream test suite passes.
+2. Run a CLI analysis for `BTC-USD` and inspect the report.
+3. Add route placeholders for `/strategies`, `/backtest`, `/wallets` in the existing React frontend.
+4. Update shared TypeScript types (`Strategy`, `Wallet`, `BacktestResult`, `Signal`) to match upstream `PortfolioDecision` / `TraderProposal`.
 
-**Milestone:** Frontend skeleton with all planned routes reachable.
+**Milestone:** Upstream `TradingAgents` runs for crypto symbols; frontend routes exist.
 
 ---
 
-### Sprint 1 — Hyperliquid Data & Market Foundation
-**Goal:** Connect to Hyperliquid and display real market data.
+### Sprint 1 — Hyperliquid Data Adapter
+**Goal:** Add a `hyperliquid` vendor so the graph can analyze perp/spot markets with native Hyperliquid data.
 
 **Epic:** Epic 1
 
 **Stories**
 - US-1.1 View live market scanner
-- US-1.2 Analyze a single market
-- US-1.3 View wallet balance
+- US-1.2 Analyze a single market with Hyperliquid data
+- US-1.3 Register Hyperliquid as a data vendor
 
 **Tasks**
-1. Install `hyperliquid-python-sdk` in the main project.
-2. Create `HyperliquidDataAdapter` in `tradingagents/dataflows/`.
-3. Build FastAPI endpoints:
+1. Install `hyperliquid-python-sdk`.
+2. Create `tradingagents/dataflows/hyperliquid.py`:
+   - `get_stock_data(symbol, start, end)` → candles
+   - `get_indicators(...)` → OHLCV-derived technicals
+   - `get_funding(symbol)`, `get_open_interest(symbol)`, `get_orderbook(symbol)`, `get_recent_trades(symbol)`, `get_liquidations(symbol)`
+3. Register `hyperliquid` in `dataflows/interface.py` and `default_config.py`.
+4. Build FastAPI endpoints:
    - `GET /api/markets`
-   - `GET /api/markets/{symbol}/analyze` (mock first, real later)
-   - `GET /api/wallet/{address}/state`
-4. Update frontend scanner to call real endpoints and show loading/error states.
-5. Add a simple `.env.example` for `HYPERLIQUID_WALLET`, `HYPERLIQUID_SECRET`, `OPENAI_API_KEY`.
+   - `GET /api/markets/{symbol}/fundamentals` (placeholder or skip for crypto)
+   - `POST /api/analyze` → runs `TradingAgentsGraph` in crypto mode and returns `PortfolioDecision`/`TraderProposal`/`SentimentReport`
+5. Update frontend scanner to show live Hyperliquid prices, 24h, volume, funding.
+6. Cache Info API calls locally.
 
-**Milestone:** Market scanner shows live prices from Hyperliquid and can trigger a (mock) analysis.
+**Milestone:** `/scanner` shows live Hyperliquid data; "Analyze" triggers `TradingAgentsGraph` and returns a typed decision.
 
 ---
 
@@ -84,15 +87,16 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 **Tasks**
 1. Design `Strategy` schema and SQLite storage.
-2. Seed 5 predefined templates with default parameters.
+2. Seed 5 templates with default parameters.
 3. Build `/strategies` page (grid of templates + saved strategies).
-4. Build `/strategies/new` and `/strategies/:id` forms with:
+4. Build `/strategies/new` and `/strategies/:id` forms:
    - Market picker
-   - Agent picker
-   - LLM provider/model pickers
+   - Agent picker (Market, Funding/OI, Sentiment, News)
+   - LLM provider/model picker (driven by `model_catalog.py`)
    - Risk config sliders
    - Execution mode selector
    - Schedule selector
+   - Wallet selector
 5. Persist strategies to backend.
 
 **Milestone:** User can create, save, edit, and delete a strategy from the UI.
@@ -102,25 +106,24 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 ### Sprint 3 — Backtesting Lab with Statistics
 **Goal:** Run historical simulations and display headline stats at the top.
 
-**Epic:** Epic 4
+**Epic:** Epic 3
 
 **Stories**
-- US-4.1 Run a backtest
-- US-4.2 View headline statistics at the top
-- US-4.3 Inspect equity curve and trades
-- US-4.4 Activate a strategy from a backtest
+- US-3.1 Run a backtest
+- US-3.2 View headline statistics at the top
+- US-3.3 Inspect equity curve and trades
+- US-3.4 Activate a strategy from a backtest
 
 **Tasks**
-1. Build `BacktestService` with fee and slippage model.
-2. Cache historical candles locally (Hyperliquid history or yfinance/Coingecko fallback).
-3. Compute statistics: Total Return, Sharpe, Max Drawdown, Win Rate, Profit Factor, # Trades, Avg Trade, Benchmark Return.
-4. Build `/backtest` page:
+1. Build `BacktestService` with fee and slippage model; use Hyperliquid candles or yfinance fallback.
+2. Compute statistics: Total Return, Sharpe, Max Drawdown, Win Rate, Profit Factor, # Trades, Avg Trade, Benchmark Return.
+3. Build `/backtest` page:
    - Strategy + date range + initial balance selector
    - Statistics cards at the top
    - Equity curve + drawdown charts
    - Trade list table
    - "Activate as Paper Strategy" button
-5. Wire "Backtest" button from the strategy builder.
+4. Wire "Backtest" button from the strategy builder.
 
 **Milestone:** A saved strategy can be backtested and promoted to a paper strategy.
 
@@ -129,16 +132,16 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 ### Sprint 4 — Multi-Wallet Support
 **Goal:** Support multiple wallets with encrypted secrets and per-wallet views.
 
-**Epic:** Epic 3
+**Epic:** Epic 4
 
 **Stories**
-- US-3.1 Add a new wallet
-- US-3.2 Switch active wallet
-- US-3.3 View combined and per-wallet PnL
+- US-4.1 Add a new wallet
+- US-4.2 Switch active wallet
+- US-4.3 View combined and per-wallet PnL
 
 **Tasks**
 1. Create `Wallet` model and `/api/wallets` CRUD.
-2. Implement encrypted secret storage (local keyring or AES with a master password).
+2. Implement encrypted secret storage (local keyring or AES with master password).
 3. Build `/wallets` page for adding/removing wallets.
 4. Add wallet switcher to header/sidebar.
 5. Update dashboard, positions, and orders to be wallet-aware.
@@ -147,22 +150,22 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
-### Sprint 5 — Signal Generation & Agent Pipeline
-**Goal:** Produce real Hyperliquid signals from `TradingAgents`.
+### Sprint 5 — Signal Generation via TradingAgentsGraph
+**Goal:** Run the upstream graph for crypto and expose typed decisions in the UI.
 
 **Epic:** Epic 5
 
 **Stories**
-- US-5.1 Generate a Hyperliquid-aware signal
-- US-5.2 Normalize signal output for execution
-- US-5.3 View agent reasoning
+- US-5.1 Run the upstream graph for crypto
+- US-5.2 Display structured signal output
+- US-5.3 Normalize signal for execution
 
 **Tasks**
-1. Add Hyperliquid-specific analyst prompts to `TradingAgents`.
-2. Build `SignalService` that runs the LangGraph pipeline.
-3. Normalize signal output to a strict schema.
-4. Update `/signals` page to display reasoning and agent reports.
-5. Add signal queue for pending/accepted/rejected/executed signals.
+1. Create `/api/signals` endpoint that calls `TradingAgentsGraph.run(asset_type="crypto", ...)`.
+2. Map `PortfolioDecision` + `TraderProposal` + `SentimentReport` to the frontend `Signal` type.
+3. Handle `AssetType.CRYPTO` filtering (fundamentals excluded).
+4. Update `/signals` page to display reasoning, agent reports, and sentiment.
+5. Add signal queue for pending/accepted/rejected/executed.
 
 **Milestone:** Running a strategy produces a structured signal with agent reasoning in the UI.
 
@@ -180,8 +183,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 **Tasks**
 1. Implement execution modes in the strategy model.
-2. Build `ExecutionService` that creates paper trades.
-3. Add cooldown, daily trade limit, slippage guard.
+2. Build `ExecutionService` that creates paper trades using live mid prices.
+3. Add cooldown, daily trade limit, slippage guard, wallet allocation check.
 4. Wire auto-execution to the signal feed.
 5. Add strategy start/pause/stop controls.
 
@@ -202,7 +205,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 1. Implement Hyperliquid order signing with `Exchange` client.
 2. Add order preview with slippage, margin, liquidation price.
 3. Add live/paper toggle and confirmation modal with risk disclaimer.
-4. Implement kill switch: cancel all orders and flatten positions.
+4. Implement kill switch: cancel all orders and flatten positions for selected wallet.
 5. Add strategy-level live trading guardrails.
 
 **Milestone:** User can run a live strategy on a small wallet balance with full risk controls.
@@ -273,12 +276,12 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 | Sprint | Epic Focus |
 |---|---|
-| 0 | Repo + frontend skeleton |
-| 1 | Epic 1 — Data & market foundation |
+| 0 | Align with upstream v0.3.1, run tests, scaffold routes |
+| 1 | Epic 1 — Hyperliquid data adapter |
 | 2 | Epic 2 — Strategy library & builder |
-| 3 | Epic 4 — Backtesting lab |
-| 4 | Epic 3 — Multi-wallet support |
-| 5 | Epic 5 — Signal generation |
+| 3 | Epic 3 — Backtesting lab |
+| 4 | Epic 4 — Multi-wallet support |
+| 5 | Epic 5 — Signal generation via TradingAgentsGraph |
 | 6 | Epic 6 — Paper auto-trading |
 | 7 | Epic 6/7 — Live execution + kill switch |
 | 8 | Epic 7 — Portfolio & risk dashboard |
@@ -291,11 +294,11 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 | Risk | Mitigation |
 |---|---|
-| Hyperliquid API changes | Pin SDK version and write adapter behind an interface. |
-| LLM costs blow up | Default to cheap models (`gpt-4o-mini`, `claude-haiku`) and cache frequent analyses. |
+| Hyperliquid API changes | Pin SDK version and keep adapter behind the `dataflows/interface.py` vendor abstraction. |
+| LLM costs blow up | Default to cheaper models from `model_catalog` (`gpt-5.4-mini`, `claude-haiku-4-5`) and cache frequent analyses. |
 | Live trading losses | Mandatory 7-day paper run before live; hard stop-loss and position caps. |
 | Encrypted secret loss | Document key backup; never store plaintext; test recovery flow. |
-| Scope creep | Stick to one epic per sprint; defer NFT/Polymarket to V2. |
+| Scope creep | Stick to one epic per sprint; defer NFT/Polymarket exchange integration to V2. |
 
 ---
 

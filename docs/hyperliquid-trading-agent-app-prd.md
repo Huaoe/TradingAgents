@@ -3,39 +3,44 @@
 
 **Author:** Devin (Thomas Berrod session)  
 **Date:** 2026-08-12  
-**Status:** Draft — feature-complete for V1 scope  
-**Related:** `Huaoe/TradingAgents` + Hyperliquid Python SDK
+**Status:** Draft — aligned with upstream `TradingAgents` v0.3.1  
+**Related:** `Huaoe/TradingAgents` + `hyperliquid-python-sdk`
 
 ---
 
 ## 1. Executive Summary
 
-Build a focused web app that extends `TradingAgents` to trade **Hyperliquid** markets using the user's own crypto wallet. The app acts as a personal command center: it runs multi-agent LLM analysis on selected perp/spot markets, optionally auto-executes signals, supports multiple wallets/accounts, provides a backtesting interface with statistics at the top, and lets users create, save, and run both predefined and custom strategies — all under strict user-controlled risk guardrails.
+Build a focused web app that turns `TradingAgents` into a personal, wallet-controlled trading bot for **Hyperliquid**. The app lets the user create or pick strategies, backtest them, run a multi-agent LLM pipeline for perp/spot markets, optionally auto-execute signals, manage multiple wallets, and track PnL — all with strict risk guardrails.
 
-This is the **fastest path to real money** from the TradingAgents framework because Hyperliquid provides:
-- Wallet-based authentication (no CEX KYC or API key required).
-- A native Python SDK.
-- Perpetuals + spot in one venue.
-- Low latency and low fees.
+This version of the PRD is rewritten to **reuse the upstream `TradingAgents` v0.3.1** capabilities:
+- Native crypto asset mode (`BTC-USD`, `SOL-USD`, ...).
+- Multi-provider LLM client registry and model catalog.
+- Structured-output schemas (`TraderProposal`, `PortfolioDecision`, `SentimentReport`).
+- `PortfolioManager` agent that already synthesizes risk-analyst debate into a typed final decision.
+- Polymarket/prediction-markets dataflow for macro/event context.
+- Symbol normalization and a robust test/CI setup.
+
+The pieces we still need to add are:
+- A **Hyperliquid data adapter** that feeds perp/spot prices, funding, open interest, and order-book data into `TradingAgents`.
+- An **execution service** that signs and submits orders to Hyperliquid using the user's API wallet.
+- A **React frontend** that exposes strategy, backtest, signal, wallet, and auto-trading controls.
 
 ---
 
 ## 2. Problem Statement
 
-`TradingAgents` currently:
-- Generates textual `BUY / SELL / HOLD` signals for equities.
-- Has no execution layer, no perp/crypto data, no wallet integration, and no multi-account support.
-- Runs from the CLI with no portfolio tracking, no strategy library, and no backtest UI.
+`TradingAgents` v0.3.1 already:
+- Detects crypto tickers (`BTC-USD`, `ETH-USD`) and disables equity-only analysts (fundamentals).
+- Produces a typed `PortfolioDecision` with `Buy / Overweight / Hold / Underweight / Sell`.
+- Supports many LLM providers via a registry/catalog.
+- Adds prediction-market context from Polymarket.
 
-To trade Hyperliquid with it, we need a product layer that:
-1. Feeds Hyperliquid market data into the agents.
-2. Lets users choose from proven strategies or build their own.
-3. Parses agent output into sized Hyperliquid orders (market/limit, size, leverage, stop, take-profit).
-4. Can run fully automatically or with human confirmation.
-5. Supports multiple wallets/accounts and capital allocation across them.
-6. Provides a backtesting UI with headline performance statistics.
-7. Tracks positions, PnL, and strategy performance.
-8. Protects the user from blow-ups.
+What it **does not** do:
+- Read **Hyperliquid-native** market data (perp prices, funding, OI, liquidations, order book).
+- Manage **wallets** or submit **orders** to an exchange.
+- Provide a **strategy builder/backtest UI** or **auto-trading controls**.
+
+This app closes those gaps while keeping the upstream graph and schemas.
 
 ---
 
@@ -43,274 +48,255 @@ To trade Hyperliquid with it, we need a product layer that:
 
 | # | Goal | Success Metric |
 |---|---|---|
-| 1 | Run TradingAgents against Hyperliquid perp/spot markets daily or on-demand. | Signal latency < 30s per market. |
-| 2 | Offer a library of predefined strategies plus a custom strategy builder. | User can launch a backtest in < 2 minutes. |
-| 3 | Convert signals into executable Hyperliquid orders automatically or with one-click approval. | Order submission success rate > 95% after paper validation. |
-| 4 | Support multiple wallets/accounts with per-wallet allocation and risk settings. | Switch wallet and strategy in < 3 clicks. |
-| 5 | Prove alpha with paper trading & backtests before live capital. | Backtest page shows Sharpe, drawdown, win rate at the top. |
+| 1 | Run `TradingAgents` against Hyperliquid perp/spot markets with native perp data. | Signal latency < 30s per market. |
+| 2 | Let users build strategies from templates or custom parameters. | Launch a backtest in < 2 minutes. |
+| 3 | Convert `PortfolioDecision`/`TraderProposal` into Hyperliquid orders, automatically or with one-click approval. | Order success rate > 95% after paper validation. |
+| 4 | Support multiple wallets/accounts with per-wallet allocation and risk settings. | Switch wallet in < 3 clicks. |
+| 5 | Prove alpha with backtests and paper trading before live capital. | Backtest page shows Sharpe, drawdown, win rate at the top. |
 | 6 | Protect capital with hard risk guardrails. | Max drawdown per strategy < user-defined X% (default 10%). |
-| 7 | Be operable by a single user with their own wallet. | < 5 minutes from login to first running strategy. |
+| 7 | Be operable by a single user with their own wallet. | < 5 minutes from onboarding to first running strategy. |
 
 ---
 
-## 4. Target User
+## 4. Leveraging Upstream v0.3.1
 
-A single, technically comfortable crypto trader who wants to:
-- Automate directional perp/spot strategies on Hyperliquid.
-- Choose from proven strategy templates or design custom agents.
-- Run strategies across multiple wallets/accounts.
-- Backtest and validate strategies before risking capital.
-- Understand *why* the AI is entering or exiting a position.
-- Retain full custody of funds via their own wallet.
+| Upstream Feature | How we use it |
+|---|---|
+| `AssetType.CRYPTO` + `detect_asset_type` (`-USD`, `-USDT`, `-USDC`) | Run the graph in crypto mode; fundamentals analyst is filtered out automatically. |
+| `normalize_symbol` in `tradingagents/dataflows/symbol_utils.py` | Accept user symbols like `BTCUSD`, `BTC-USD`, `BTC-USDT` and resolve them to `BTC-USD` for Yahoo or to `BTC` for Hyperliquid. |
+| `llm_clients` + `model_catalog.py` | Populate the strategy builder's LLM provider/model dropdowns. |
+| `TraderProposal` / `PortfolioDecision` in `tradingagents/agents/schemas.py` | Treat these as the signal schema between the agent graph and the execution engine. |
+| `PortfolioManager` in `tradingagents/agents/managers/portfolio_manager.py` | Reuse the risk-analyst judge instead of writing a new one. |
+| `SentimentReport` from `sentiment_analyst.py` | Display sentiment band, score, and confidence in the signal feed. |
+| Polymarket dataflow + `get_prediction_markets` | Add macro/event context to the `news_analyst` for crypto catalysts (Fed, elections, ETF approvals). |
+| `dataflows/interface.py` vendor routing | Add `hyperliquid` as a new `core_stock_apis` / `technical_indicators` vendor behind the same `route_to_vendor` calls. |
+| `tests/` + `pytest` + GitHub Actions | Keep the same testing discipline; add tests for the Hyperliquid adapter and execution service. |
 
 ---
 
-## 5. Supported Markets
+## 5. Target User
+
+A single, technically comfortable crypto trader who:
+- Wants to run LLM agents on Hyperliquid perp/spot markets.
+- Wants a strategy library, backtests, and auto-trading controls in one UI.
+- Holds funds in their own wallet and only shares an encrypted API-wallet secret.
+
+---
+
+## 6. Supported Markets
 
 | Market | Instruments | Use Case |
 |---|---|---|
-| **Perpetuals** | `BTC`, `ETH`, `SOL`, and other Hyperliquid perp pairs | Directional long/short with leverage |
+| **Perpetuals** | `BTC`, `ETH`, `SOL`, and all Hyperliquid perp pairs | Directional long/short with leverage |
 | **Spot** | Hyperliquid spot pairs (e.g. `HYPE/USDC`, `PURR/USDC`) | Spot swing / accumulation |
 
----
-
-## 6. New Agent Modules for Hyperliquid
-
-Extend `TradingAgents` with Hyperliquid-aware analysts. Each analyst maps to one or more Hyperliquid `Info` API calls.
-
-| Agent | Responsibility | Data Source |
-|---|---|---|
-| **Market Data Analyst** | Price action, OHLCV, order book depth, recent trades | `allMids`, `candles`, `l2Book`, `recentTrades` |
-| **Funding & OI Analyst** | Funding rates, open interest, liquidation maps | `funding`, `openInterest`, `liquidations` |
-| **On-Chain/Sentiment Analyst** | Exchange flows, social sentiment, macro news | Glassnode/Dune (optional), X/Reddit, CoinDesk |
-| **Technical Analyst** | RSI, MACD, volume profile, support/resistance | Candles from Hyperliquid or computed locally |
-| **Risk Analyst** | Position sizing, leverage, drawdown, liquidation distance | `clearinghouseState`, user margin data |
-| **Trader** | Final order plan: action, size, entry, stop, target | Synthesizes all analyst reports + past memory |
-| **Risk Manager** | Approves/rejects the trade against risk rules | Internal risk config |
-
-All agents use the existing LangGraph debate + reflection framework.
+User-facing symbols should map to Hyperliquid's `coin` names (`BTC`, `ETH`, `SOL`, `HYPE`, `PURR`, ...). For `TradingAgents` we can pass the equivalent Yahoo symbol (`BTC-USD`) to the upstream graph when using Yahoo as a fallback, and pass the raw `BTC` coin to the Hyperliquid adapter.
 
 ---
 
-## 7. Core Features
+## 7. Agent Pipeline (Reusing Upstream)
 
-### 7.1 Strategy Library & Builder
+```
+User picks strategy
+  ├─ symbol normalized (BTCUSD -> BTC for HL, BTC-USD for Yahoo)
+  ├─ TradingAgentsGraph.run() with asset_type=CRYPTO
+  │   ├─ Market Analyst (uses Hyperliquid candles/order book)
+  │   ├─ Sentiment Analyst (news + StockTwits + Reddit)
+  │   ├─ News Analyst (news + Polymarket macro context)
+  │   ├─ Bull / Bear Researchers
+  │   ├─ Trader -> TraderProposal
+  │   ├─ Aggressive / Conservative / Neutral Risk Analysts
+  │   └─ PortfolioManager -> PortfolioDecision
+  └─ Execution engine converts PortfolioDecision -> Hyperliquid order
+```
 
-A central place to browse, clone, create, backtest, and activate strategies.
+### Hyperliquid-specific data sources
 
-**Predefined Strategy Templates**
-
-| Template | Description | Default Markets |
+| Agent | Responsibility | Hyperliquid Info API |
 |---|---|---|
-| **Momentum Breakout** | Enter on volume-confirmed breakouts with trailing stops. | BTC, ETH, SOL perps |
-| **Mean Reversion** | Counter-trend entries at RSI extremes with tight stops. | BTC, ETH perps |
-| **Funding Rate Arb** | Go long/short based on funding-rate extremes vs. spot. | High-funding perps + spot |
-| **HYPE Delta Neutral** | Long perp / short spot (or vice versa) to harvest funding. | HYPE perp + spot |
-| **Custom** | User-defined agent ensemble, indicators, and risk rules. | Any |
+| **Market Data Analyst** | OHLCV, order book depth, recent trades | `candles`, `l2Book`, `recentTrades`, `allMids` |
+| **Funding & OI Analyst** | Funding rates, open interest, liquidations | `funding`, `openInterest`, `liquidations` |
+| **News + Polymarket Analyst** | Macro/event context | `get_prediction_markets` (Polymarket via existing tool) |
+| **Sentiment Analyst** | News, StockTwits, Reddit | existing `sentiment_analyst.py` |
+| **Risk Analysts** | Position sizing, leverage, drawdown | `clearinghouseState`, user margin |
+| **PortfolioManager** | Final `PortfolioDecision` | reuses upstream node |
 
-Each template exposes editable parameters:
+The new code we add is mostly:
+- A `hyperliquid` vendor in `dataflows/interface.py`.
+- A `HyperliquidDataFlow` module that implements the same functions as `yfinance` (or narrower set) so the agents can consume perp/spot data transparently.
+
+---
+
+## 8. Core Features
+
+### 8.1 Strategy Library & Builder
+
+**Predefined Templates**
+
+| Template | Default Settings |
+|---|---|
+| **Momentum Breakout** | Market + Sentiment + News agents; enter on volume-confirmed breakouts; trailing stop. |
+| **Mean Reversion** | Market + Sentiment; RSI/MACD extremes; tight stop. |
+| **Funding Rate Arb** | Funding/OI analyst + News; fade/revert extreme funding. |
+| **HYPE Delta Neutral** | Long perp + short spot (or vice versa) on HYPE to harvest funding. |
+| **Custom** | User picks agents, LLM, risk, schedule. |
+
+**Builder Parameters**
 - Markets / watchlist.
-- Timeframe and lookback.
-- Agent ensemble (which analysts to include).
-- LLM provider and models (deep thinker + quick thinker).
-- Risk parameters: max allocation, max leverage, max daily loss, stop-loss, take-profit, direction filter.
-- Execution mode: manual, auto-confirm, or fully automatic.
+- Agent ensemble (Market, Funding/OI, Sentiment, News).
+- LLM provider and model (populated from `model_catalog.py`).
+- Risk: max wallet allocation, max trade allocation, max leverage, stop-loss %, take-profit %, max daily loss, max trades/day, cooldown.
+- Execution mode: Manual / Auto-confirm / Fully automatic.
+- Schedule: on demand / every N min / at event (funding reset, 4h close).
+- Assigned wallet.
 - Paper vs. live.
 
-**Builder Flow**
-1. User picks a template or starts from scratch.
-2. Configure parameters on a single form.
-3. Save draft.
-4. Run backtest (see 7.6).
-5. Activate as paper or live strategy.
+### 8.2 Multi-Wallet Support
 
-### 7.2 Multi-Wallet / Multi-Account Support
+- Add multiple Hyperliquid API wallets, label them ("Main", "Aggressive", etc.).
+- Encrypted secret storage (local keyring/AES with master password).
+- Per-wallet balances, positions, PnL.
+- Default wallet per strategy; global wallet switcher.
 
-- Add multiple Hyperliquid wallets/accounts:
-  - Main trading wallet.
-  - API wallets (one per strategy to limit risk).
-  - Sub-accounts (if Hyperliquid supports them).
-- Label wallets (e.g. "Main", "Aggressive", "Conservative").
-- Assign a default wallet per strategy.
-- Dashboard shows combined or per-wallet PnL.
-- Capital allocation per wallet: % of wallet balance a strategy may use.
-- All private keys/API wallet secrets encrypted at rest.
+### 8.3 Auto-Trading Engine
 
-### 7.3 Auto-Trading Engine
+- Manual: signal appears in feed, user accepts/rejects.
+- Auto-confirm: signal executes unless user cancels within N seconds.
+- Fully automatic: signal executes immediately if it passes risk filters.
+- Schedule/cooldown/daily trade limits.
+- Bracket orders (stop-loss + take-profit) placed after entry.
+- Start / pause / stop per strategy.
 
-- Each strategy can run in one of three modes:
-  - **Manual** — generate signal, wait for user accept/reject.
-  - **Auto-confirm** — show signal and execute if user does not cancel within N seconds.
-  - **Fully automatic** — execute immediately when signal passes all risk filters.
-- Schedule strategies to run:
-  - On demand.
-  - Every N minutes/hours.
-  - At market events (e.g. funding reset, 4h candle close).
-- Cooldown / anti-overtrade guard: max N trades per day, min hold time.
-- Post-execution actions: set stop-loss/take-profit bracket orders automatically.
-- One-click start / pause / stop per strategy.
-- Activity log: every signal, override, and execution.
+### 8.4 Market Scanner
 
-### 7.4 Market Scanner
+- Grid of Hyperliquid markets: price, 24h, volume, funding, OI, signal, confidence.
+- Filters and sorting.
+- One-click **Analyze** runs the `TradingAgentsGraph` for that coin.
 
-- Grid of Hyperliquid perp and spot markets.
-- Columns: last price, 24h change, funding rate, open interest, agent signal, confidence.
-- Filters: market type, signal direction, confidence threshold, volatility.
-- One-click "Analyze" to run the full TradingAgents graph for that market.
-- Bulk "Run Strategy" on selected markets.
+### 8.5 Signal Feed
 
-### 7.5 Signal Feed
+- Card per signal showing:
+  - `Buy / Overweight / Hold / Underweight / Sell` from `PortfolioDecision`.
+  - Confidence, size, leverage, entry, stop, target.
+  - Agent reasoning and `SentimentReport` band/score.
+- Accept / edit / reject / auto-execute.
 
-- Card per market showing:
-  - `BUY / SELL / HOLD` with confidence %.
-  - Recommended size in USDC and as % of account.
-  - Recommended leverage (perps only).
-  - Suggested entry, stop-loss, take-profit.
-  - Agent reasoning summary.
-- User can accept, edit, or reject the signal.
-- Auto-execution history and pending queue.
+### 8.6 Backtesting Interface
 
-### 7.6 Backtesting Interface
-
-A dedicated page with **headline statistics at the top** followed by detailed charts and trade data.
-
-**Statistics Header (top of the page)**
+**Statistics at the top of the page**
 
 | Metric | Description |
 |---|---|
-| **Total Return** | Cumulative strategy return vs. benchmark |
-| **Sharpe Ratio** | Risk-adjusted return |
-| **Max Drawdown** | Largest peak-to-trough decline |
-| **Win Rate** | % of winning trades |
-| **Profit Factor** | Gross profit / gross loss |
-| **# Trades** | Total closed trades |
-| **Avg Trade** | Average PnL per trade |
-| **Benchmark Return** | Buy-and-hold return for the same period |
+| Total Return | Cumulative strategy return |
+| Sharpe Ratio | Risk-adjusted return |
+| Max Drawdown | Largest peak-to-trough decline |
+| Win Rate | % winning trades |
+| Profit Factor | Gross profit / gross loss |
+| # Trades | Closed trades |
+| Avg Trade | Mean PnL per trade |
+| Benchmark Return | Buy-and-hold / HODL return |
 
 **Below the statistics**
 - Equity curve vs. benchmark.
 - Drawdown chart.
 - Monthly returns heatmap.
-- Trade list with entry/exit, PnL, duration, reasoning.
-- Parameter sensitivity table.
-- Walk-forward / out-of-sample selector.
-- "Activate as Strategy" button after successful backtest.
+- Sortable trade list with entry/exit, PnL, duration, reasoning.
+- "Activate as Strategy" button.
 
-### 7.7 Order Preview & Execution
+### 8.7 Portfolio & Positions
 
-- On signal accept or auto-trigger, show an order preview:
-  - Market or limit order.
-  - Estimated size, notional, margin, fees (~0.045% taker / 0.015% maker).
-  - Slippage estimate from order book.
-  - Post-trade account margin and liquidation price (perps).
-- One-click "Execute" or "Paper Execute".
-- Orders are signed via the Hyperliquid Python SDK using the wallet assigned to the strategy.
-
-### 7.8 Portfolio & Positions
-
-- Real-time view of open perp/spot positions across all wallets.
-- Unrealized/realized PnL, margin used, available margin.
-- Open orders list with cancel buttons.
-- Funding payments history.
-- Fills history.
+- Open perp/spot positions across wallets.
+- Unrealized/realized PnL, margin, available balance.
+- Open orders with cancel.
+- Funding payments and fill history.
 - Per-strategy and per-wallet PnL attribution.
 
-### 7.9 Reflection & Memory
+### 8.8 Reflection & Memory
 
-- After a position closes, feed realized returns back to `reflect_and_remember()`.
-- Memory browser: what did the agents learn, which agents are contributing positively.
-- User can flag a bad trade to update agent memory.
+- After a closed trade, feed realized return to `reflect_and_remember()`.
+- Memory browser in UI.
 
-### 7.10 Alerts
+### 8.9 Alerts
 
-- In-app, email, Telegram, or Discord alerts for:
-  - New signals.
-  - Executed orders.
-  - Stop-loss / take-profit hits.
-  - Risk threshold breaches.
-  - Strategy started/stopped.
+- In-app, Telegram, Discord, email for signals, fills, stop hits, risk breaches.
 
 ---
 
-## 8. User Flow
+## 9. User Flow
 
 ```
 Onboarding
-  ├─ Connect or generate Hyperliquid API wallet(s)
-  ├─ Set risk guardrails and default paper/live mode
+  ├─ Add Hyperliquid API wallet(s)
+  ├─ Set risk guardrails and default paper mode
   └─ Fund Hyperliquid account(s)
 
-Dashboard
-  ├─ Combined & per-wallet portfolio snapshot
-  ├─ Active strategies with start/pause/stop
-  └─ Latest signals
-
 Strategy Library
-  ├─ Pick predefined template or custom
-  ├─ Configure parameters
+  ├─ Pick template or custom
+  ├─ Configure markets, agents, LLM, risk, execution mode, wallet
   ├─ Save & Backtest
   └─ Activate (paper or live)
 
 Market Scanner
-  └─ Analyze a market → Signal Feed
+  └─ Analyze a market -> Signal Feed
 
 Signal Feed
-  └─ Manual accept / Auto-execute → Order Preview → Portfolio
+  └─ Manual accept / Auto-execute -> Order Preview -> Portfolio
 
 Backtest Lab
-  └─ Select strategy + date range → View top statistics → Activate
+  └─ Select strategy + date range -> View top stats -> Activate
 ```
 
 ---
 
-## 9. System Architecture
+## 10. System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Vite + React + TypeScript + Tailwind Frontend                         │
-│  - Dashboard, scanner, strategy builder, signal feed, backtest, portfolio │
-├─────────────────────────────────────────────────────────────────────────┤
-│  FastAPI Backend (Python)                                               │
-│  - Orchestrates TradingAgents graph per strategy                       │
-│  - Wraps Hyperliquid Python SDK for order execution                    │
-│  - Manages wallets, strategies, backtests, positions, alerts           │
-├─────────────────────────────────────────────────────────────────────────┤
-│  TradingAgents Core (LangGraph)                                        │
-│  - Hyperliquid data adapters                                           │
-│  - New perp/spot analyst and risk agents                               │
-│  - Memory (ChromaDB) and reflection                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Hyperliquid Network                                                   │
-│  - Info API (read-only, no auth)                                       │
-│  - Exchange API (signed orders via user wallet)                        │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Vite + React + TypeScript + Tailwind Frontend                             │
+│  Dashboard, scanner, strategy builder, backtest, signals, positions        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  FastAPI Backend (Python)                                                    │
+│  - Strategy, wallet, backtest, alert CRUD                                   │
+│  - Orchestrates TradingAgentsGraph.run(asset_type=CRYPTO, symbol=...)       │
+│  - Converts PortfolioDecision / TraderProposal to Hyperliquid orders        │
+│  - Signs/submits via hyperliquid-python-sdk                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  TradingAgents Core (upstream v0.3.1)                                       │
+│  - crypto asset mode, multi-provider LLM clients, structured schemas        │
+│  - PortfolioManager, SentimentReport, Polymarket tool                       │
+│  - Memory + reflection                                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Hyperliquid Data & Execution Layer (new)                                   │
+│  - Info API client: candles, order book, funding, OI, clearinghouseState    │
+│  - Exchange client: signed perp/spot orders, leverage, cancel               │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Backend Services
 
 | Service | Responsibility |
 |---|---|
-| **Wallet Service** | Store encrypted keys, fetch balances, support multiple accounts. |
-| **Strategy Service** | Templates, custom builder, versioning, activation, scheduling. |
-| **Signal Service** | Run the TradingAgents graph and normalize output. |
-| **Execution Service** | Build, sign, and submit Hyperliquid orders; track fills. |
-| **Data Service** | Fetch candles, order book, funding, OI from Hyperliquid Info API; cache locally. |
-| **Portfolio Service** | Sync `clearinghouseState` and open orders; compute PnL per wallet. |
-| **Backtest Service** | Historical simulation with fee/slippage model and performance stats. |
-| **Alert Service** | Webhooks / Telegram / Discord / email notifications. |
+| **Wallet Service** | Encrypted API-wallet secrets, balance sync. |
+| **Strategy Service** | Templates, builder, versioning, scheduling. |
+| **Signal Service** | Wrap `TradingAgentsGraph.run()` and normalize `PortfolioDecision`/`TraderProposal`. |
+| **Execution Service** | Build, sign, submit Hyperliquid orders; track fills. |
+| **Data Service** | Hyperliquid Info reads + caching; fallback to yfinance for spot. |
+| **Backtest Service** | Historical sim with fees/slippage and stats. |
+| **Portfolio Service** | Sync `clearinghouseState`, compute PnL per wallet. |
+| **Alert Service** | Notifications. |
 
 ---
 
-## 10. Hyperliquid Integration Details
+## 11. Hyperliquid Integration Details
 
-### 10.1 SDK
+### SDK
 
-- Use `hyperliquid-python-sdk`.
-- `Info` client for all reads.
-- `Exchange` client for all signed writes.
-- Supports both testnet and mainnet.
+- `hyperliquid-python-sdk`.
+- `Info` client for reads.
+- `Exchange` client for signed writes.
+- Testnet and mainnet support.
 
-### 10.2 Read Operations
+### Read Operations
 
 | Endpoint | Purpose |
 |---|---|
@@ -319,90 +305,85 @@ Backtest Lab
 | `l2Book` | Order book depth |
 | `funding` | Funding rate history |
 | `openInterest` | OI per asset |
-| `liquidations` | Recent liquidation data |
+| `liquidations` | Recent liquidations |
 | `clearinghouseState` | User margin, positions, balances |
-| `orderStatus` | Status of a placed order |
+| `orderStatus` | Order status |
 
-### 10.3 Write Operations
+### Write Operations
 
-| Operation | SDK Method | Notes |
-|---|---|---|
-| Place perp order | `exchange.order()` | Specify `coin`, `is_buy`, `sz`, `limit_px`, `order_type` |
-| Place spot order | `exchange.spot_order()` | Use spot token format |
-| Set leverage | `exchange.update_leverage()` | Per-asset leverage |
-| Cancel order | `exchange.cancel()` | By `coin` and `oid` |
-| Transfer spot↔perp | `exchange.usd_class_transfer()` | Manage USDC between wallets |
+| Operation | SDK Method |
+|---|---|
+| Place perp order | `exchange.order()` |
+| Place spot order | `exchange.spot_order()` |
+| Set leverage | `exchange.update_leverage()` |
+| Cancel order | `exchange.cancel()` |
 
-### 10.4 Wallet Setup
+### Wallet Setup
 
-- User generates an **API wallet** from the Hyperliquid UI per strategy or account.
-- App stores only the API-wallet private key, never the main wallet seed.
-- Private key is encrypted at rest (e.g. AWS KMS / HashiCorp Vault / local keyring).
-- All transactions are EIP-712 signed by the SDK.
+- User creates an API wallet in Hyperliquid UI.
+- App stores encrypted API-wallet secret only.
+- Main wallet seed never leaves the user's custody.
+- Orders signed EIP-712 by the SDK.
 
-### 10.5 Fees
+### Fees
 
-- Base tier: **0.045% taker / 0.015% maker**.
-- Volume tiers and `HYPE` staking can reduce fees further.
-- Strategy backtests and paper trading must model these fees.
+- Base: ~0.045% taker / 0.015% maker.
+- Backtests/paper trading must model these.
 
 ---
 
-## 11. Risk & Safety Guardrails
-
-These are non-negotiable and enforced before any live order.
+## 12. Risk & Safety Guardrails
 
 | Guardrail | Default | Behavior |
 |---|---|---|
-| Paper-first mode | On | Every new strategy must paper trade for 30 days before live. |
-| Per-wallet max allocation | 25% | Strategy cannot use more than X% of wallet. |
-| Per-trade max allocation | 10% | Single trade cannot exceed X% of wallet. |
-| Max leverage | 5x | Per-asset cap; can be lower per strategy. |
-| Max daily loss | 5% wallet / 2% strategy | Halt affected strategy for 24h after hit. |
-| Stop-loss | Required | No order submitted without a stop. |
-| Take-profit | Optional but recommended | Encourage 1.5–2x R/R. |
-| Slippage guard | 1% | Cancel if fill price > 1% from signal price. |
-| Liquidity filter | $100k+ 24h volume | Avoid illiquid perps/spot pairs. |
-| Max trades per day | 10 | Limit churn and fees. |
-| Cooldown | 5 min | Minimum time between new trades in same market. |
-| Kill switch | Manual | One button to cancel all orders and flatten per wallet. |
+| Paper-first | On | New strategy must paper trade 7 days before live. |
+| Max wallet allocation | 25% | Strategy cannot use more. |
+| Max trade allocation | 10% | Single trade limit. |
+| Max leverage | 5x | Cap per perp. |
+| Max daily loss | 5% wallet / 2% strategy | Halt for 24h. |
+| Stop-loss | Required | No order without stop. |
+| Take-profit | Recommended | Encourage 1.5–2x R/R. |
+| Slippage guard | 1% | Cancel if fill > 1% from signal. |
+| Liquidity filter | $100k+ 24h volume | Avoid illiquid pairs. |
+| Max trades/day | 10 | Limit churn. |
+| Cooldown | 5 min | Between new trades in same market. |
+| Kill switch | Manual | Cancel all orders, flatten positions. |
 
 ---
 
-## 12. Data Model
+## 13. Data Model
 
 ```
 User
  ├─ wallets: Wallet[]
- ├─ riskProfile
- └─ defaultWalletId
+ ├─ defaultWalletId
+ └─ riskProfile
 
 Wallet
- ├─ id, label, address
- ├─ encryptedSecret (API wallet secret)
- ├─ type (main | api | subaccount)
+ ├─ id, label, address, encryptedSecret
+ ├─ type (api | subaccount)
  └─ isPaper
 
 Strategy
- ├─ id, name, description, isTemplate, isActive
- ├─ template (momentum | mean_reversion | funding_arb | delta_neutral | custom)
- ├─ marketType (perp | spot | mixed)
+ ├─ id, name, isTemplate, template
  ├─ markets: string[]
  ├─ agents: string[]
- ├─ llmConfig
+ ├─ llmProvider, llmModel
  ├─ executionMode (manual | auto_confirm | automatic)
- ├─ schedule (on_demand | interval | event)
+ ├─ schedule
  ├─ walletId
- ├─ riskConfig (maxWalletAllocation, maxTradeAllocation, maxLeverage, maxDailyLoss, stopLoss, takeProfit, maxTradesPerDay, cooldownMinutes)
+ ├─ riskConfig
  ├─ mode (paper | live)
  ├─ backtestResult?: BacktestResult
  └─ createdAt, updatedAt
 
 Signal
- ├─ strategyId, walletId, market, action (BUY/SELL/HOLD)
+ ├─ strategyId, walletId, market
+ ├─ decision: PortfolioDecision
+ ├─ proposal: TraderProposal
+ ├─ sentiment?: SentimentReport
  ├─ confidence, size, leverage, entry, stop, target
- ├─ reasoning, agentReports
- ├─ executionMode
+ ├─ reasoning
  └─ timestamp
 
 Order
@@ -431,20 +412,19 @@ BacktestResult
  ├─ strategyId, startDate, endDate
  ├─ totalReturn, sharpe, maxDrawdown, winRate, profitFactor, tradeCount, avgTrade
  ├─ benchmarkReturn
- ├─ equityCurve: { date, value }[]
- ├─ trades: Trade[]
+ ├─ equityCurve, drawdowns, trades
  └─ createdAt
 ```
 
 ---
 
-## 13. Page Map
+## 14. Page Map
 
 | Route | Purpose |
 |---|---|
 | `/` | Dashboard: combined & per-wallet portfolio, active strategies |
 | `/strategies` | Strategy library and builder |
-| `/strategies/:id` | Strategy detail, backtests, activation controls |
+| `/strategies/:id` | Strategy detail, backtests, activation |
 | `/scanner` | Hyperliquid market scanner |
 | `/signals` | Signal feed and execution queue |
 | `/orders` | Open orders and fill history |
@@ -452,51 +432,49 @@ BacktestResult
 | `/backtest` | Backtest lab with statistics at the top |
 | `/wallets` | Wallet manager |
 | `/memory` | Agent reflection memory browser |
-| `/settings` | Risk defaults, API keys, alerts |
+| `/settings` | Defaults, alerts, LLM config |
 
 ---
 
-## 14. Non-Functional Requirements
+## 15. Non-Functional Requirements
 
-- **Latency:** Signal generation < 30s per market; order submission < 3s.
-- **Uptime:** Backend 99.5% during market hours; retries for API failures.
-- **Security:** API wallet keys encrypted at rest; no plaintext keys in logs; no custody of main wallet.
-- **Audit:** Every signal, order, override, and strategy change logged immutably.
-- **Cost:** Cache Hyperliquid Info API calls; run agents only when needed.
-- **Compliance:** Not financial advice disclaimers on every screen; user must acknowledge risks before live mode.
+- **Latency:** Signal < 30s per market; order submission < 3s.
+- **Uptime:** Backend 99.5% during market hours; retries on Hyperliquid failures.
+- **Security:** Encrypted secrets at rest; no plaintext keys in logs; no custody of main wallet.
+- **Audit:** Every signal, order, override, and strategy change logged.
+- **Cost:** Cache Info API calls; use cheaper LLMs (`gpt-5.4-mini`, `claude-haiku-4-5`) for quick tasks.
+- **Compliance:** Not financial advice disclaimers; user must acknowledge live trading risks.
 
 ---
 
-## 15. Roadmap
+## 16. Roadmap
 
 | Phase | Scope | Time |
 |---|---|---|
-| **V0 — Scaffold & Data** | Vite frontend, Hyperliquid data adapter, market scanner | Week 1 |
-| **V1 — Strategy Builder** | Predefined + custom strategies, backtest UI with top statistics | Week 2 |
-| **V2 — Multi-Wallet & Paper Trading** | Wallet manager, paper execution, portfolio tracking | Week 3 |
-| **V3 — Auto-Trading** | Auto-execution modes, scheduling, risk guardrails | Week 4 |
-| **V4 — Live & Polish** | Live signing, alerts, memory/reflection, mobile UI | Week 5 |
+| **V0 — Data Adapter** | Add `hyperliquid` vendor to `dataflows/interface.py`; implement candles/OB/funding/OI reads; update Market Scanner | Week 1 |
+| **V1 — Strategy Builder + Backtest** | Strategy templates, builder, backtest UI with top statistics | Week 2 |
+| **V2 — Multi-Wallet + Paper Trading** | Wallet manager, paper execution, portfolio tracking | Week 3 |
+| **V3 — Signal + Auto-Trading** | Wire `TradingAgentsGraph` with `asset_type=CRYPTO`; signal feed; auto/manual execution | Week 4 |
+| **V4 — Live Trading + Risk** | Signed Hyperliquid orders, risk guardrails, kill switch | Week 5 |
+| **V5 — Alerts + Reflection + Polish** | Telegram/Discord alerts, reflection loop, mobile UI, onboarding | Week 6+ |
 
 ---
 
-## 16. Open Questions
+## 17. Open Questions
 
-1. Do we start with **perps only** or include spot from V0?
-2. Which LLM provider gives the best cost/accuracy ratio for Hyperliquid signal generation?
-3. How do we source historical candles for backtests — Hyperliquid History API or local cache?
-4. Should the app run locally (self-hosted) or as a hosted service?
-5. Do we want Telegram/Discord bot alerts or in-app only?
-6. Should auto-trading require a second confirmation (2FA / email) for live mode?
+1. Do we add a `hyperliquid` vendor to the upstream `dataflows/interface.py`, or keep the adapter in a separate `hyperliquid` service that feeds the graph?
+2. Should backtests use Hyperliquid historical candles (limited history) or yfinance spot data as a proxy for perps?
+3. Which Hyperliquid testnet is available for paper trading, or do we simulate fills against live mid prices?
+4. Do we want a second confirmation (email/2FA) before any live auto-trade?
+5. Should the strategy builder expose **all** `model_catalog` providers, or restrict to a curated subset?
 
 ---
 
-## 17. Next Steps
+## 18. Next Steps
 
-1. Scaffold FastAPI backend with Hyperliquid `Info`/`Exchange` clients.
-2. Add a `HyperliquidDataAdapter` to `tradingagents/dataflows/`.
-3. Implement the strategy library and builder in the frontend.
-4. Write perp/spot-specific analyst and risk prompts.
-5. Build the backtest interface with statistics at the top.
-6. Add wallet management and encrypted secret storage.
-7. Implement paper-trading engine and auto-trading scheduler.
-8. Run 30-day paper test before enabling live signing.
+1. Implement `tradingagents/dataflows/hyperliquid.py` with `get_stock_data`, `get_indicators`, `get_funding`, `get_open_interest`, `get_orderbook`.
+2. Register `hyperliquid` as a vendor in `dataflows/interface.py` and `default_config.py`.
+3. Build a FastAPI endpoint `/api/signals/{symbol}` that runs `TradingAgentsGraph` in crypto mode and returns `PortfolioDecision` + `TraderProposal` + `SentimentReport`.
+4. Add the strategy builder and backtest page to the existing React frontend.
+5. Implement encrypted wallet storage and the Hyperliquid `ExecutionService`.
+6. Run 7 days of paper trading before enabling live signing.
