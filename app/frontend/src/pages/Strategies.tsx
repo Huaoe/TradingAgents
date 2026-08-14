@@ -9,6 +9,10 @@ const TEMPLATE_CARDS: { template: string; title: string; description: string }[]
   { template: 'mean_reversion', title: 'Mean Reversion', description: 'RSI/MACD extremes and liquidation wicks.' },
   { template: 'funding_rate_arb', title: 'Funding Rate Arb', description: 'Fade funding extremes vs. spot.' },
   { template: 'hype_delta_neutral', title: 'HYPE Delta Neutral', description: 'Harvest funding while keeping delta near zero.' },
+  { template: 'trend_following', title: 'Trend Following', description: 'SMA/EMA aligned trends with momentum confirmation.' },
+  { template: 'scalp_momentum', title: 'Scalp Momentum', description: 'Short-term 5-15m burst plays with tight stops.' },
+  { template: 'news_event', title: 'News Event', description: 'React to catalysts with News and Sentiment agents.' },
+  { template: 'basis_arbitrage', title: 'Basis Arbitrage', description: 'Trade spot vs perpetual convergence.' },
   { template: 'custom', title: 'Custom', description: 'Build your own strategy from scratch.' },
 ];
 

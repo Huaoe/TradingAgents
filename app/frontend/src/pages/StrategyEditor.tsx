@@ -31,6 +31,10 @@ const TEMPLATE_DEFAULTS: Record<string, Partial<StrategyInput>> = {
   mean_reversion: { agents: ['Market', 'Sentiment'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
   funding_rate_arb: { agents: ['Market', 'Funding'], riskConfig: { leverage: 2, allocation: 20, confidenceFloor: 70 } },
   hype_delta_neutral: { agents: ['Market', 'Funding'], riskConfig: { leverage: 1, allocation: 25, confidenceFloor: 75 } },
+  trend_following: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 4, allocation: 12, confidenceFloor: 62 } },
+  scalp_momentum: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 6, allocation: 8, confidenceFloor: 68 } },
+  news_event: { agents: ['News', 'Sentiment', 'Market'], riskConfig: { leverage: 4, allocation: 10, confidenceFloor: 70 } },
+  basis_arbitrage: { agents: ['Market', 'Funding'], riskConfig: { leverage: 2, allocation: 30, confidenceFloor: 75 } },
   custom: { agents: ['Market', 'Funding', 'OrderBook'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
 };
 

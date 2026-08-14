@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, Loader2 } from 'lucide-react';
+import { Play, Loader2, AlertCircle } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
 import { fetchMarkets, fetchStrategies, runAnalysis } from '../services/api';
 import type { Market, Signal, Strategy } from '../types';
@@ -10,6 +10,8 @@ export function Scanner() {
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>('');
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [latestSignal, setLatestSignal] = useState<Signal | null>(null);
+  const [signals, setSignals] = useState<Record<string, Signal>>({});
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMarkets().then(setMarkets);
@@ -17,10 +19,16 @@ export function Scanner() {
   }, []);
 
   const handleAnalyze = async (symbol: string) => {
+    setError(null);
     setAnalyzing(symbol);
     try {
       const signal = await runAnalysis(symbol, selectedStrategyId || undefined);
+      setSignals((prev) => ({ ...prev, [symbol]: signal }));
       setLatestSignal(signal);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Analysis failed';
+      setError(`${symbol}: ${message}`);
+      console.error(err);
     } finally {
       setAnalyzing(null);
     }
@@ -49,6 +57,13 @@ export function Scanner() {
           </select>
         </div>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl border border-red-500/30 bg-red-500/5 flex items-start gap-3 text-sm text-red-200">
+          <AlertCircle className="w-4 h-4 mt-0.5 text-red-400" />
+          {error}
+        </div>
+      )}
 
       {latestSignal && (
         <Card className="border-violet-500/30 bg-violet-500/5">
@@ -82,28 +97,42 @@ export function Scanner() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
-            {markets.map((m) => (
-              <tr key={m.symbol} className="hover:bg-gray-800/30 transition-colors">
-                <td className="p-4 font-medium">{m.symbol} <span className="text-gray-500 font-normal">{m.name}</span></td>
-                <td className="p-4 text-gray-400 capitalize">{m.type}</td>
-                <td className="p-4">${m.price.toLocaleString()}</td>
-                <td className={`p-4 ${m.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{m.change24h >= 0 ? '+' : ''}{m.change24h}%</td>
-                <td className="p-4 text-gray-400">${(m.volume24h / 1e6).toFixed(1)}M</td>
-                <td className="p-4 text-gray-400">{m.funding !== undefined ? `${(m.funding * 100).toFixed(4)}%` : '-'}</td>
-                <td className="p-4 text-gray-400">{m.openInterest !== undefined ? `$${(m.openInterest * (m.price || 0) / 1e6).toFixed(1)}M` : '-'}</td>
-                <td className="p-4">{m.signal ? <Badge action={m.signal} /> : <span className="text-gray-500">—</span>}</td>
-                <td className="p-4 text-right">
-                  <button
-                    onClick={() => handleAnalyze(m.symbol)}
-                    disabled={analyzing === m.symbol}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
-                  >
-                    {analyzing === m.symbol ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                    Analyze
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {markets.map((m) => {
+              const rowSignal = signals[m.symbol];
+              return (
+                <tr key={m.symbol} className="hover:bg-gray-800/30 transition-colors">
+                  <td className="p-4 font-medium">{m.symbol} <span className="text-gray-500 font-normal">{m.name}</span></td>
+                  <td className="p-4 text-gray-400 capitalize">{m.type}</td>
+                  <td className="p-4">${m.price.toLocaleString()}</td>
+                  <td className={`p-4 ${m.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{m.change24h >= 0 ? '+' : ''}{m.change24h}%</td>
+                  <td className="p-4 text-gray-400">${(m.volume24h / 1e6).toFixed(1)}M</td>
+                  <td className="p-4 text-gray-400">{m.funding !== undefined ? `${(m.funding * 100).toFixed(4)}%` : '-'}</td>
+                  <td className="p-4 text-gray-400">{m.openInterest !== undefined ? `$${(m.openInterest * (m.price || 0) / 1e6).toFixed(1)}M` : '-'}</td>
+                  <td className="p-4">
+                    {rowSignal ? (
+                      <div className="flex items-center gap-2">
+                        <Badge action={rowSignal.action} />
+                        <span className="text-xs text-gray-500">{rowSignal.confidence}%</span>
+                      </div>
+                    ) : m.signal ? (
+                      <Badge action={m.signal} />
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </td>
+                  <td className="p-4 text-right">
+                    <button
+                      onClick={() => handleAnalyze(m.symbol)}
+                      disabled={analyzing === m.symbol}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+                    >
+                      {analyzing === m.symbol ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                      Analyze
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </Card>
