@@ -132,7 +132,7 @@ def _signal_for_bar(
     long_thr = _safe_float(cfg.get("longFundingThreshold"), -0.0005)
     short_thr = _safe_float(cfg.get("shortFundingThreshold"), 0.0005)
     confidence_floor = int(_safe_float(cfg.get("confidenceFloor"), 60))
-    template = strategy.get("template", "custom")
+    template = strategy.get("template", "custom").replace("_", "-")
 
     trend_up = close > sma20 and sma20 > sma50 and close > prev_close
     trend_down = close < sma20 and sma20 < sma50 and close < prev_close
@@ -177,11 +177,41 @@ def _signal_for_bar(
         else:
             return 0
         score += funding_score()
-    elif template in ("funding-rate-arb", "hype-delta-neutral"):
+    elif template in ("funding-rate-arb", "hype-delta-neutral", "basis-arbitrage"):
         if funding < long_thr:
             score = 80
         elif funding > short_thr:
             score = 20
+        else:
+            return 0
+    elif template == "trend-following":
+        if trend_up:
+            score = 70
+        elif trend_down:
+            score = 30
+        else:
+            return 0
+        score += funding_score()
+    elif template == "scalp-momentum":
+        if pd.notna(upper) and close > upper and trend_up:
+            score = 80
+        elif pd.notna(lower) and close < lower and trend_down:
+            score = 20
+        else:
+            return 0
+        score += funding_score()
+    elif template == "news-event":
+        bar_range = row["high"] - row["low"]
+        atr = row["atr14"]
+        open_price = row["open"]
+        if pd.notna(atr) and atr > 0 and bar_range > 1.5 * atr:
+            if close > open_price and close > prev_close:
+                score = 80
+            elif close < open_price and close < prev_close:
+                score = 20
+            else:
+                return 0
+            score += funding_score()
         else:
             return 0
     else:  # custom / fallback
