@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from tradingagents.llm_clients import model_catalog
 
 from backend.models.alert import AlertReadRequest
 from backend.models.backtest import BacktestRequest, BacktestResult
@@ -24,20 +26,59 @@ from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.alert_engine import AlertEngine
 from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
+from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
 from backend.services.strategy_store import StrategyStore
 from backend.services.wallet_store import WalletStore
-from tradingagents.llm_clients import model_catalog
+
+logger = logging.getLogger(__name__)
+
+# In-memory observability counters.  Persistent totals are read from the
+# individual stores so metrics survive restarts where data is stored.
+_METRICS: dict[str, int] = {"backtests_run": 0}
+
+REFRESH_INTERVAL = 10
+HISTORY_INTERVAL = 60
+
+
+async def _refresh_positions_loop() -> None:
+    engine = ExecutionEngine()
+    while True:
+        try:
+            await asyncio.to_thread(engine.refresh_positions)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Position refresh failed: %s", exc)
+        await asyncio.sleep(REFRESH_INTERVAL)
+
+
+async def _record_history_loop() -> None:
+    engine = PortfolioEngine()
+    while True:
+        await asyncio.sleep(HISTORY_INTERVAL)
+        try:
+            await asyncio.to_thread(engine.record_history)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Portfolio history snapshot failed: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Pre-warm the Hyperliquid Info client on startup.
     _ = HyperliquidClient()
-    yield
+    refresh_task = asyncio.create_task(_refresh_positions_loop())
+    history_task = asyncio.create_task(_record_history_loop())
+    try:
+        yield
+    finally:
+        refresh_task.cancel()
+        history_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await refresh_task
+        with suppress(asyncio.CancelledError):
+            await history_task
 
 
 app = FastAPI(
@@ -65,6 +106,20 @@ class AnalyzeRequest(BaseModel):
 @app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/metrics")
+async def metrics() -> dict[str, Any]:
+    return {
+        "total_backtests_run": _METRICS["backtests_run"],
+        "total_signals_generated": len(SignalStore().list_signals()),
+        "total_orders_created": len(ExecutionStore().list_orders()),
+        "total_wallets": len(WalletStore().list_wallets()),
+        "total_strategies": len(StrategyStore().list_strategies()),
+        "open_positions_count": len(
+            [p for p in ExecutionStore().list_positions() if p["status"] == "open"]
+        ),
+    }
 
 
 @app.get("/api/markets")
@@ -100,7 +155,8 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/api/signals")
@@ -125,7 +181,8 @@ async def create_signal(payload: SignalCreate) -> dict[str, Any]:
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/signals")
@@ -190,13 +247,15 @@ async def backtest(payload: BacktestRequest) -> BacktestResult:
             taker_fee=payload.takerFee,
             slippage_pct=payload.slippagePct,
         )
+        _METRICS["backtests_run"] += 1
         return BacktestResult(**result)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/candles/{symbol}")
@@ -244,18 +303,34 @@ async def get_strategy(strategy_id: str) -> dict[str, Any]:
 
 @app.post("/api/strategies")
 async def create_strategy(payload: StrategyCreate) -> dict[str, Any]:
-    store = StrategyStore()
-    strategy = await asyncio.to_thread(store.create_strategy, payload)
-    return strategy.model_dump()
+    try:
+        store = StrategyStore()
+        strategy = await asyncio.to_thread(store.create_strategy, payload)
+        return strategy.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error creating strategy: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.patch("/api/strategies/{strategy_id}")
 async def update_strategy(strategy_id: str, payload: StrategyUpdate) -> dict[str, Any]:
-    store = StrategyStore()
-    strategy = await asyncio.to_thread(store.update_strategy, strategy_id, payload)
-    if not strategy:
-        raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
-    return strategy.model_dump()
+    try:
+        store = StrategyStore()
+        strategy = await asyncio.to_thread(store.update_strategy, strategy_id, payload)
+        if not strategy:
+            raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")
+        return strategy.model_dump()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error updating strategy: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.delete("/api/strategies/{strategy_id}")
@@ -331,8 +406,11 @@ async def execute_trade(payload: ExecuteRequest) -> dict[str, Any]:
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/positions")
@@ -340,8 +418,11 @@ async def list_positions(wallet_id: str | None = None) -> list[dict[str, Any]]:
     try:
         engine = ExecutionEngine()
         return await asyncio.to_thread(engine.list_positions, wallet_id)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/api/positions/{position_id}/close")
@@ -358,8 +439,11 @@ async def close_position(position_id: str, payload: ClosePositionRequest) -> dic
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/orders")
@@ -367,8 +451,11 @@ async def list_orders(wallet_id: str | None = None) -> list[dict[str, Any]]:
     try:
         engine = ExecutionEngine()
         return await asyncio.to_thread(engine.list_orders, wallet_id)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/portfolio")
@@ -377,8 +464,23 @@ async def portfolio(wallet_id: str | None = None) -> PortfolioSummary:
         engine = PortfolioEngine()
         result = await asyncio.to_thread(engine.summary, wallet_id)
         return PortfolioSummary(**result)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@app.get("/api/portfolio/history")
+async def portfolio_history(wallet_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    try:
+        engine = PortfolioEngine()
+        return await asyncio.to_thread(engine.portfolio_store.get_history, wallet_id, limit)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/api/portfolio/live")
@@ -389,8 +491,11 @@ async def set_live_mode(payload: LiveModeRequest) -> dict[str, Any]:
             engine.portfolio_store.set_live_enabled, payload.walletId, payload.enabled
         )
         return {"walletId": payload.walletId, "liveEnabled": payload.enabled}
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/alerts")
@@ -400,8 +505,11 @@ async def list_alerts(
     try:
         engine = AlertEngine()
         return await asyncio.to_thread(engine.list_alerts, wallet_id, unread_only)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/alerts/unread")
@@ -410,8 +518,11 @@ async def unread_alert_count(wallet_id: str | None = None) -> dict[str, Any]:
         engine = AlertEngine()
         count = await asyncio.to_thread(engine.unread_count, wallet_id)
         return {"unread": count}
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/api/alerts/{alert_id}/read")
@@ -422,8 +533,11 @@ async def read_alert(alert_id: str, payload: AlertReadRequest | None = None) -> 
             payload = AlertReadRequest()
         ok = await asyncio.to_thread(engine.mark_read, alert_id)
         return {"alertId": alert_id, "read": ok}
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.post("/api/alerts/read-all")
@@ -432,8 +546,11 @@ async def read_all_alerts(wallet_id: str | None = None) -> dict[str, Any]:
         engine = AlertEngine()
         ok = await asyncio.to_thread(engine.store.mark_all_read, wallet_id)
         return {"read": ok}
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 @app.get("/api/journal")
@@ -441,8 +558,11 @@ async def list_journal(wallet_id: str | None = None, limit: int = 100) -> list[d
     try:
         engine = AlertEngine()
         return await asyncio.to_thread(engine.list_journal, wallet_id, limit)
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
 
 
 # Serve the built React app from the Docker image. API routes above take precedence.

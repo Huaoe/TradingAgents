@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from tradingagents.llm_clients import model_catalog
+
 from backend.models.strategy import Strategy, StrategyCreate, StrategyUpdate
 
 TEMPLATES: list[dict[str, Any]] = [
@@ -36,7 +38,7 @@ TEMPLATES: list[dict[str, Any]] = [
         "template": "mean_reversion",
         "agents": ["Market", "Sentiment"],
         "llmProvider": "anthropic",
-        "llmModel": "glm-5-turbo",
+        "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
         "riskConfig": {
@@ -126,7 +128,7 @@ TEMPLATES: list[dict[str, Any]] = [
         "template": "news_event",
         "agents": ["News", "Sentiment", "Market"],
         "llmProvider": "anthropic",
-        "llmModel": "glm-5-turbo",
+        "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
         "riskConfig": {
@@ -313,6 +315,34 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _validate_llm_selection(provider: str, model: str, mode: str) -> None:
+    """Validate an LLM provider/model/mode against the shared catalog.
+
+    Raises ValueError with a clear message if the provider is unknown or the
+    model is not offered for the chosen provider and mode.
+    """
+    provider = provider.lower()
+    if provider not in model_catalog.MODEL_OPTIONS:
+        known = ", ".join(sorted(model_catalog.MODEL_OPTIONS))
+        raise ValueError(
+            f"Unknown LLM provider '{provider}'. Known providers: {known}"
+        )
+
+    mode_options = model_catalog.MODEL_OPTIONS[provider]
+    if mode not in mode_options:
+        raise ValueError(
+            f"Unknown LLM mode '{mode}' for provider '{provider}'. "
+            f"Valid modes: {', '.join(sorted(mode_options))}"
+        )
+
+    allowed = {value for _, value in mode_options[mode]}
+    if model not in allowed:
+        raise ValueError(
+            f"Invalid model '{model}' for provider '{provider}' in mode '{mode}'. "
+            f"Allowed models: {', '.join(sorted(allowed))}"
+        )
+
+
 class StrategyStore:
     """Singleton SQLite-backed store for strategies."""
 
@@ -378,6 +408,7 @@ class StrategyStore:
         return Strategy(**json.loads(row[0]))
 
     def create_strategy(self, payload: StrategyCreate) -> Strategy:
+        _validate_llm_selection(payload.llmProvider, payload.llmModel, payload.llmMode)
         now = _utc_now()
         strategy_id = str(uuid.uuid4())
         data = payload.model_dump()
@@ -399,6 +430,13 @@ class StrategyStore:
         for key, value in payload.model_dump(exclude_unset=True).items():
             if value is not None:
                 update_data[key] = value
+
+        _validate_llm_selection(
+            update_data["llmProvider"],
+            update_data["llmModel"],
+            update_data["llmMode"],
+        )
+
         update_data["updatedAt"] = _utc_now()
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(

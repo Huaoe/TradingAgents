@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, X } from 'lucide-react';
+import { Loader2, X, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { Card } from '../components/Card';
 import { fetchPositions, fetchOrders, closePosition } from '../services/api';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/useWallet';
 import type { Position, Order } from '../types';
 
 export function Positions() {
@@ -12,18 +12,30 @@ export function Positions() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(() => {
-    const walletId = selectedWallet?.id;
-    Promise.all([fetchPositions(walletId), fetchOrders(walletId)])
-      .then(([p, o]) => {
-        setPositions(p);
-        setOrders(o);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load'));
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const walletId = selectedWallet?.id;
+      const [p, o] = await Promise.all([fetchPositions(walletId), fetchOrders(walletId)]);
+      setPositions(p);
+      setOrders(o);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load');
+    } finally {
+      setLoading(false);
+    }
   }, [selectedWallet]);
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      load();
+    }, 10000);
+    return () => clearInterval(interval);
   }, [load]);
 
   const handleClose = async (positionId: string) => {
@@ -32,7 +44,7 @@ export function Positions() {
     setError('');
     try {
       await closePosition({ positionId, walletId: selectedWallet.id, mode: 'paper' });
-      load();
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Close failed');
     } finally {
@@ -40,25 +52,43 @@ export function Positions() {
     }
   };
 
+  if (!selectedWallet) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold">Positions & Orders</h1>
+        <div className="text-sm text-amber-400">Select an active wallet from the sidebar to view positions.</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Positions & Orders</h1>
-        <p className="text-sm text-gray-400 mt-1">Open positions, working orders, and fill history</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Positions & Orders</h1>
+          <p className="text-sm text-gray-400 mt-1">Open positions, working orders, and fill history</p>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-60 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+          Refresh
+        </button>
       </div>
 
-      {!selectedWallet && (
-        <div className="text-sm text-amber-400">Select an active wallet from the sidebar to view positions.</div>
-      )}
-
       {error && (
-        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm">{error}</div>
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <div className="flex-1">{error}</div>
+        </div>
       )}
 
       <Card>
         <h2 className="text-lg font-medium mb-4">Open Positions</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+        <div className="overflow-x-auto -mx-5 px-5">
+          <table className="w-full text-sm text-left min-w-[640px]">
             <thead className="text-gray-400 border-b border-gray-800">
               <tr>
                 <th className="pb-3 font-medium">Market</th>
@@ -97,7 +127,7 @@ export function Positions() {
                   </td>
                 </tr>
               ))}
-              {positions.length === 0 && (
+              {positions.filter((p) => p.status === 'open').length === 0 && (
                 <tr><td colSpan={9} className="py-4 text-gray-500">No open positions.</td></tr>
               )}
             </tbody>
@@ -107,8 +137,8 @@ export function Positions() {
 
       <Card>
         <h2 className="text-lg font-medium mb-4">Orders</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
+        <div className="overflow-x-auto -mx-5 px-5">
+          <table className="w-full text-sm text-left min-w-[600px]">
             <thead className="text-gray-400 border-b border-gray-800">
               <tr>
                 <th className="pb-3 font-medium">ID</th>

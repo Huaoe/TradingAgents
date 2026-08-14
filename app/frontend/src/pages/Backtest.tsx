@@ -9,8 +9,9 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
+  Brush,
 } from 'recharts';
-import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar } from 'lucide-react';
+import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Card } from '../components/Card';
 import { fetchStrategies, runBacktest, updateStrategy } from '../services/api';
@@ -75,6 +76,128 @@ function formatSide(signal: number) {
   if (signal > 0) return 'LONG';
   if (signal < 0) return 'SHORT';
   return 'FLAT';
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function useChartZoom<T>(data: T[], minItems = 20) {
+  const [startIndex, setStartIndex] = useState(0);
+  const [endIndex, setEndIndex] = useState(0);
+
+  useEffect(() => {
+    setStartIndex(0);
+    setEndIndex(Math.max(0, data.length - 1));
+  }, [data.length]);
+
+  function setRange(range: { startIndex?: number; endIndex?: number }) {
+    if (!data.length) return;
+    let start = typeof range.startIndex === 'number' ? Math.round(range.startIndex) : startIndex;
+    let end = typeof range.endIndex === 'number' ? Math.round(range.endIndex) : endIndex;
+    if (end - start + 1 < minItems) {
+      const center = Math.round((start + end) / 2);
+      start = Math.max(0, center - Math.floor((minItems - 1) / 2));
+      end = Math.min(data.length - 1, start + minItems - 1);
+      if (end - start + 1 < minItems) {
+        start = Math.max(0, end - minItems + 1);
+      }
+    }
+    start = clamp(start, 0, data.length - 1);
+    end = clamp(end, start, data.length - 1);
+    setStartIndex(start);
+    setEndIndex(end);
+  }
+
+  function zoomIn() {
+    if (!data.length) return;
+    const current = endIndex - startIndex + 1;
+    const newWidth = Math.max(Math.round(current * 0.8), minItems);
+    const center = Math.round((startIndex + endIndex) / 2);
+    let newStart = center - Math.floor(newWidth / 2);
+    let newEnd = newStart + newWidth - 1;
+    if (newStart < 0) {
+      newEnd -= newStart;
+      newStart = 0;
+    }
+    if (newEnd >= data.length) {
+      newStart -= newEnd - (data.length - 1);
+      newEnd = data.length - 1;
+    }
+    setStartIndex(Math.max(0, newStart));
+    setEndIndex(Math.min(data.length - 1, newEnd));
+  }
+
+  function zoomOut() {
+    if (!data.length) return;
+    const current = endIndex - startIndex + 1;
+    const newWidth = Math.min(Math.round(current / 0.8), data.length);
+    const center = Math.round((startIndex + endIndex) / 2);
+    let newStart = center - Math.floor(newWidth / 2);
+    let newEnd = newStart + newWidth - 1;
+    if (newStart < 0) {
+      newEnd -= newStart;
+      newStart = 0;
+    }
+    if (newEnd >= data.length) {
+      newStart -= newEnd - (data.length - 1);
+      newEnd = data.length - 1;
+    }
+    setStartIndex(Math.max(0, newStart));
+    setEndIndex(Math.min(data.length - 1, newEnd));
+  }
+
+  function reset() {
+    setStartIndex(0);
+    setEndIndex(Math.max(0, data.length - 1));
+  }
+
+  const visibleData = useMemo(() => {
+    if (!data.length) return [];
+    const from = startIndex;
+    const to = Math.max(from + 1, endIndex + 1);
+    return data.slice(from, to);
+  }, [data, startIndex, endIndex]);
+
+  function onBrushChange(range: { startIndex?: number; endIndex?: number }) {
+    if (!data.length) return;
+    const start = typeof range.startIndex === 'number' ? range.startIndex : 0;
+    const end = typeof range.endIndex === 'number' ? range.endIndex : visibleData.length - 1;
+    setRange({ startIndex: start + startIndex, endIndex: end + startIndex });
+  }
+
+  return { visibleData, zoomIn, zoomOut, reset, startIndex, endIndex, setRange, onBrushChange };
+}
+
+function ZoomControls({ zoomIn, zoomOut, reset }: { zoomIn: () => void; zoomOut: () => void; reset: () => void }) {
+  return (
+    <div className="inline-flex items-center gap-1">
+      <button
+        type="button"
+        onClick={zoomOut}
+        title="Zoom out"
+        className="p-1 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
+      >
+        <ZoomOut className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        onClick={reset}
+        title="Reset view"
+        className="p-1 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
+      >
+        <RotateCcw className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        onClick={zoomIn}
+        title="Zoom in"
+        className="p-1 rounded-md bg-gray-800 text-gray-300 hover:bg-gray-700 transition-colors"
+      >
+        <ZoomIn className="w-4 h-4" />
+      </button>
+    </div>
+  );
 }
 
 export function Backtest() {
@@ -167,6 +290,10 @@ export function Backtest() {
     }
     return data;
   }, [result]);
+
+  const equityZoom = useChartZoom(result?.equity ?? []);
+  const drawdownZoom = useChartZoom(result?.drawdown ?? []);
+  const priceZoom = useChartZoom(priceChartData);
 
   const stats = result?.summary;
 
@@ -326,8 +453,27 @@ export function Backtest() {
         </form>
 
         {error && (
-          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm">
-            {error}
+          <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <div className="flex-1">{error}</div>
+            <button
+              type="button"
+              onClick={() => { setError(''); handleRun({ preventDefault: () => {} } as React.FormEvent); }}
+              className="text-violet-400 hover:text-violet-300 text-xs font-medium"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {loading && !result && (
+          <div className="mt-4 space-y-3">
+            <div className="h-4 w-32 bg-gray-800 rounded animate-pulse" />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="h-20 bg-gray-800 rounded animate-pulse" />
+              ))}
+            </div>
           </div>
         )}
       </Card>
@@ -391,10 +537,10 @@ export function Backtest() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Card title="Equity Curve">
+            <Card title="Equity Curve" actions={<ZoomControls zoomIn={equityZoom.zoomIn} zoomOut={equityZoom.zoomOut} reset={equityZoom.reset} />}>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={result!.equity}>
+                  <LineChart data={equityZoom.visibleData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis
                       dataKey="time"
@@ -414,15 +560,25 @@ export function Backtest() {
                       formatter={(value) => [formatUSD(Number(value)), 'Equity']}
                     />
                     <Line type="monotone" dataKey="equity" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                    <Brush
+                      startIndex={0}
+                      endIndex={Math.max(0, equityZoom.visibleData.length - 1)}
+                      onChange={equityZoom.onBrushChange}
+                      height={30}
+                      travellerWidth={8}
+                      stroke="#8b5cf6"
+                      fill="rgba(139, 92, 246, 0.2)"
+                      tickFormatter={(t: string) => new Date(t).toLocaleDateString()}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             </Card>
 
-            <Card title="Drawdown">
+            <Card title="Drawdown" actions={<ZoomControls zoomIn={drawdownZoom.zoomIn} zoomOut={drawdownZoom.zoomOut} reset={drawdownZoom.reset} />}>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={result!.drawdown}>
+                  <AreaChart data={drawdownZoom.visibleData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                     <XAxis
                       dataKey="time"
@@ -442,16 +598,26 @@ export function Backtest() {
                       formatter={(value) => [`${value}%`, 'Drawdown']}
                     />
                     <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+                    <Brush
+                      startIndex={0}
+                      endIndex={Math.max(0, drawdownZoom.visibleData.length - 1)}
+                      onChange={drawdownZoom.onBrushChange}
+                      height={30}
+                      travellerWidth={8}
+                      stroke="#ef4444"
+                      fill="rgba(239, 68, 68, 0.2)"
+                      tickFormatter={(t: string) => new Date(t).toLocaleDateString()}
+                    />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </Card>
           </div>
 
-          <Card title="Price + Buy / Sell Signals">
+          <Card title="Price + Buy / Sell Signals" actions={<ZoomControls zoomIn={priceZoom.zoomIn} zoomOut={priceZoom.zoomOut} reset={priceZoom.reset} />}>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={priceChartData}>
+                <LineChart data={priceZoom.visibleData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis
                     dataKey="time"
@@ -484,6 +650,17 @@ export function Backtest() {
                     dot={{ r: 5, fill: '#ef4444' }}
                     isAnimationActive={false}
                     name="Sell"
+                  />
+                  <Brush
+                    dataKey="close"
+                    startIndex={0}
+                    endIndex={Math.max(0, priceZoom.visibleData.length - 1)}
+                    onChange={priceZoom.onBrushChange}
+                    height={30}
+                    travellerWidth={8}
+                    stroke="#38bdf8"
+                    fill="rgba(56, 189, 248, 0.2)"
+                    tickFormatter={(t: string) => new Date(t).toLocaleDateString()}
                   />
                 </LineChart>
               </ResponsiveContainer>

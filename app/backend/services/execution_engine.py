@@ -167,6 +167,14 @@ class ExecutionEngine:
 
         liq = _liquidation_price(fill_price, leverage, side)
         margin = round(notional / leverage, 2) if leverage else round(notional, 2)
+        live_market = self.client.get_market(symbol)
+        live_mark = (
+            live_market.get("markPrice")
+            or live_market.get("price")
+            or fill_price
+            if live_market
+            else fill_price
+        )
         position = {
             "id": position_id,
             "orderId": order_id,
@@ -174,7 +182,7 @@ class ExecutionEngine:
             "symbol": symbol,
             "side": side,
             "entryPrice": fill_price,
-            "markPrice": fill_price,
+            "markPrice": live_mark,
             "size": size_coin,
             "notional": round(notional, 2),
             "leverage": leverage,
@@ -266,23 +274,36 @@ class ExecutionEngine:
         position["side"] = "LONG" if position["side"] == "Buy" else "SHORT"
         return position
 
+    def _compute_live_pnl(self, pos: dict[str, Any]) -> None:
+        market = self.client.get_market(pos["symbol"])
+        if not market:
+            return
+        mark = market.get("markPrice") or market.get("price") or pos["entryPrice"]
+        pos["markPrice"] = mark
+        if pos["side"] == "Buy":
+            gross = pos["size"] * (mark - pos["entryPrice"])
+        else:
+            gross = pos["size"] * (pos["entryPrice"] - mark)
+        pos["pnl"] = round(gross, 4)
+        pos["pnlPct"] = round(
+            (gross / pos["notional"] * 100) if pos["notional"] else 0.0, 4
+        )
+
+    def refresh_positions(self) -> None:
+        """Update stored mark prices and unrealized PnL for all open positions."""
+        positions = self.store.list_open_positions()
+        for pos in positions:
+            self._compute_live_pnl(pos)
+            self.store.mark_position_price(
+                pos["id"], pos["markPrice"], pos["pnl"], pos["pnlPct"]
+            )
+
     def list_positions(self, wallet_id: str | None = None) -> list[dict[str, Any]]:
         positions = self.store.list_positions(wallet_id)
         # Re-mark open positions to current price for unrealized PnL.
         for pos in positions:
             if pos["status"] == "open":
-                market = self.client.get_market(pos["symbol"])
-                if market:
-                    mark = market.get("price") or pos["entryPrice"]
-                    pos["markPrice"] = mark
-                    if pos["side"] == "Buy":
-                        gross = pos["size"] * (mark - pos["entryPrice"])
-                    else:
-                        gross = pos["size"] * (pos["entryPrice"] - mark)
-                    pos["pnl"] = round(gross, 4)
-                    pos["pnlPct"] = round(
-                        (gross / pos["notional"] * 100) if pos["notional"] else 0.0, 4
-                    )
+                self._compute_live_pnl(pos)
             pos["side"] = "LONG" if pos["side"] == "Buy" else "SHORT"
         return positions
 

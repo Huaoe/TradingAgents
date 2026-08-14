@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
-import { TrendingUp, TrendingDown, Activity, DollarSign, Shield } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { TrendingUp, TrendingDown, Activity, DollarSign, Shield, Loader2, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { Card } from '../components/Card';
-import { fetchAccount, fetchSignals, fetchPositions } from '../services/api';
-import { useWallet } from '../context/WalletContext';
-import { equityData } from '../data/mockData';
-import type { Account, Signal, Position } from '../types';
+import { fetchAccount, fetchSignals, fetchPositions, fetchPortfolioHistory } from '../services/api';
+import { useWallet } from '../context/useWallet';
+import type { Account, Signal, Position, PortfolioHistoryPoint } from '../types';
 
 function Stat({ label, value, sub, positive }: { label: string; value: string; sub?: string; positive?: boolean }) {
   return (
@@ -20,26 +19,90 @@ function Stat({ label, value, sub, positive }: { label: string; value: string; s
   );
 }
 
+function SkeletonStat() {
+  return (
+    <Card>
+      <div className="h-4 w-20 bg-gray-800 rounded mb-2 animate-pulse" />
+      <div className="h-8 w-32 bg-gray-800 rounded animate-pulse" />
+    </Card>
+  );
+}
+
 export function Dashboard() {
   const { selectedWallet } = useWallet();
   const [account, setAccount] = useState<Account | null>(null);
   const [signals, setSignals] = useState<Signal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [history, setHistory] = useState<PortfolioHistoryPoint[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const load = useCallback(() => {
-    const walletId = selectedWallet?.id;
-    Promise.all([fetchAccount(walletId), fetchSignals(), fetchPositions(walletId)]).then(([a, s, p]) => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const walletId = selectedWallet?.id;
+      const [a, s, p, h] = await Promise.all([
+        fetchAccount(walletId),
+        fetchSignals(),
+        fetchPositions(walletId),
+        fetchPortfolioHistory(walletId, 100),
+      ]);
       setAccount(a);
       setSignals(s.slice(0, 3));
       setPositions(p.filter((pos) => pos.status === 'open'));
-    });
+      setHistory(h);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard');
+    } finally {
+      setLoading(false);
+    }
   }, [selectedWallet]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (!account) return <div className="p-8 text-gray-400">Loading dashboard...</div>;
+  const equityData = useMemo(
+    () => history.map((point) => ({ time: point.timestamp, equity: point.totalValue })),
+    [history]
+  );
+
+  if (!account && loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-8 w-48 bg-gray-800 rounded animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonStat key={i} />)}
+        </div>
+        <div className="h-64 bg-gray-800 rounded animate-pulse" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <div className="flex-1">{error}</div>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="inline-flex items-center gap-2 bg-violet-600 hover:bg-violet-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!account) {
+    return <div className="p-8 text-gray-400">No account data available.</div>;
+  }
 
   const walletLabel = account.wallet || account.walletId || 'Paper';
   const unrealizedPositive = account.unrealizedPnl >= 0;
@@ -47,7 +110,7 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
           <p className="text-sm text-gray-400 mt-1">Hyperliquid trading agent overview</p>
@@ -57,18 +120,26 @@ export function Dashboard() {
             {account.mode === 'live' ? 'LIVE' : 'PAPER'}
           </span>
           <DollarSign className="w-4 h-4" />
-          <span>Wallet: {walletLabel}</span>
+          <span className="truncate max-w-[140px] sm:max-w-none">Wallet: {walletLabel}</span>
+          <button
+            onClick={load}
+            disabled={loading}
+            className="p-1.5 rounded-lg bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+            aria-label="Refresh"
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+          </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat label="Total Value" value={`$${account.totalValue.toLocaleString()}`} sub={`$${account.available.toLocaleString()} available`} />
         <Stat label="Unrealized PnL" value={`${unrealizedPositive ? '+' : ''}$${account.unrealizedPnl.toLocaleString()}`} positive={unrealizedPositive} />
         <Stat label="Daily PnL" value={`${dailyPositive ? '+' : ''}$${account.dailyPnl.toLocaleString()}`} positive={dailyPositive} />
-        <Stat label="Margin Used" value={`$${account.marginUsed.toLocaleString()}`} sub={`${((account.marginUsed / account.totalValue) * 100).toFixed(1)}% of account`} />
+        <Stat label="Margin Used" value={`$${account.marginUsed.toLocaleString()}`} sub={`${account.totalValue ? ((account.marginUsed / account.totalValue) * 100).toFixed(1) : '0.0'}% of account`} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <Stat
           label="LLM Spend"
           value={`$${(account.llmSpend ?? 0).toFixed(4)}`}
@@ -86,21 +157,27 @@ export function Dashboard() {
         <Card className="lg:col-span-2">
           <h2 className="text-lg font-medium mb-4">Equity Curve (Paper)</h2>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={equityData}>
-                <defs>
-                  <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis dataKey="day" stroke="#6b7280" fontSize={12} />
-                <YAxis stroke="#6b7280" fontSize={12} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={{ backgroundColor: '#11131a', border: '1px solid #374151' }} />
-                <Area type="monotone" dataKey="value" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorValue)" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {equityData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-sm text-gray-500">
+                No equity history yet. Points are recorded every minute.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={equityData}>
+                  <defs>
+                    <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis dataKey="time" stroke="#6b7280" fontSize={12} tickFormatter={(t) => new Date(t).toLocaleDateString()} />
+                  <YAxis stroke="#6b7280" fontSize={12} domain={['auto', 'auto']} tickFormatter={(v) => `$${Number(v).toLocaleString()}`} />
+                  <Tooltip contentStyle={{ backgroundColor: '#11131a', border: '1px solid #374151' }} labelFormatter={(label) => new Date(String(label)).toLocaleString()} formatter={(value) => [`$${Number(value).toLocaleString()}`, 'Equity']} />
+                  <Area type="monotone" dataKey="equity" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorValue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </Card>
 

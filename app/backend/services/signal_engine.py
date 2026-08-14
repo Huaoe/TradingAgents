@@ -19,6 +19,7 @@ from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.llm_cost import estimate_cost
 from backend.services.llm_tracker import LlmUsageTracker
 from backend.services.llm_usage_store import LlmUsageStore
+from backend.services.template_signals import prepare_candles_features, signal_for_bar
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
@@ -76,7 +77,6 @@ def _build_signal(
     funding = market.get("funding", 0.0)
     oi = market.get("openInterest", 0.0)
 
-    features = _candle_features(client, symbol)
     book = client.get_orderbook(symbol, levels=10)
 
     # Configurable thresholds from strategy or defaults
@@ -92,63 +92,112 @@ def _build_signal(
     imbalance = book.get("imbalance", 0.5)
     book_signal = "bullish" if imbalance > 0.55 else "bearish" if imbalance < 0.45 else "neutral"
 
+    # Non-custom templates use the same bar-scoring logic as the backtest engine
+    # so live and historical signals are consistent.
+    template = (strategy or {}).get("template", "custom")
+    template = template.replace("_", "-") if template is not None else "custom"
+
     score = 50
     reasons: list[str] = []
+    features: dict[str, Any] = {"ok": False}
 
-    if features["ok"]:
-        trend = features["trend"]
-        change1h = features["change1h"]
-        if trend == "up" and change1h > 0:
-            score += 15
-            reasons.append(f"short-term trend is up (SMA20/50 aligned, +{change1h * 100:.2f}% 1h)")
-        elif trend == "down" and change1h < 0:
-            score -= 15
-            reasons.append(f"short-term trend is down (SMA20/50 aligned, {change1h * 100:.2f}% 1h)")
+    if template and template != "custom":
+        # Template-specific scoring from the shared module.
+        end = int(datetime.now(timezone.utc).timestamp() * 1000)
+        start = end - 30 * 24 * 60 * 60 * 1000
+        try:
+            candles = client.get_candles(symbol, interval="1h", start_ms=start, end_ms=end)
+        except Exception:
+            candles = []
+        if not candles:
+            raise ValueError("no candle data")
+        df = prepare_candles_features(candles)
+        if len(df) < 2:
+            raise ValueError("insufficient candle data")
+        df["fundingRate"] = 0.0
+        df.at[df.index[-1], "fundingRate"] = funding
+        idx = len(df) - 1
+        sig, conf = signal_for_bar(df, idx, strategy or {})
+        action = {1: "BUY", -1: "SELL", 0: "HOLD"}.get(sig, "HOLD")
+        score = int(conf)
+        reasons.append(f"Template '{template}' scored {score}/100 -> {action}")
+
+        row = df.iloc[idx]
+        close = float(row["close"])
+        prev_close = float(df["close"].iloc[idx - 1]) if idx > 0 else close
+        change1h = (close - prev_close) / prev_close if prev_close else 0.0
+        sma20 = float(row["sma20"]) if pd.notna(row.get("sma20")) else close
+        sma50 = float(row["sma50"]) if pd.notna(row.get("sma50")) else close
+        atr = float(row["atr14"]) if pd.notna(row.get("atr14")) else price * 0.015
+        volume = float(row["volume"]) if pd.notna(row.get("volume")) else 0.0
+        trend = "up" if close > sma20 > sma50 else "down" if close < sma20 < sma50 else "neutral"
+        features = {
+            "ok": True,
+            "close": close,
+            "change1h": change1h,
+            "sma20": sma20,
+            "sma50": sma50,
+            "atr": atr,
+            "volume": volume,
+            "trend": trend,
+        }
+    else:
+        # Template-agnostic rule engine (custom or no template).
+        features = _candle_features(client, symbol)
+        if features["ok"]:
+            trend = features["trend"]
+            change1h = features["change1h"]
+            if trend == "up" and change1h > 0:
+                score += 15
+                reasons.append(f"short-term trend is up (SMA20/50 aligned, +{change1h * 100:.2f}% 1h)")
+            elif trend == "down" and change1h < 0:
+                score -= 15
+                reasons.append(f"short-term trend is down (SMA20/50 aligned, {change1h * 100:.2f}% 1h)")
+            else:
+                reasons.append(f"price action is mixed ({change1h * 100:.2f}% 1h)")
+
+            if book_signal == "bullish":
+                score += 10
+                reasons.append(f"order-book bid imbalance {imbalance:.2f} shows buying pressure")
+            elif book_signal == "bearish":
+                score -= 10
+                reasons.append(f"order-book ask imbalance {imbalance:.2f} shows selling pressure")
+            else:
+                reasons.append("order-book is balanced")
         else:
-            reasons.append(f"price action is mixed ({change1h * 100:.2f}% 1h)")
+            reasons.append("candle data unavailable; using snapshot only")
 
-        if book_signal == "bullish":
+        funding_extreme = False
+        if funding < long_funding_threshold:
             score += 10
-            reasons.append(f"order-book bid imbalance {imbalance:.2f} shows buying pressure")
-        elif book_signal == "bearish":
+            reasons.append(
+                f"funding is negative ({funding:.6f}), shorts pay longs — contrarian long bias"
+            )
+            funding_extreme = True
+        elif funding > short_funding_threshold:
             score -= 10
-            reasons.append(f"order-book ask imbalance {imbalance:.2f} shows selling pressure")
+            reasons.append(
+                f"funding is highly positive ({funding:.6f}), longs pay shorts — contrarian short bias"
+            )
+            funding_extreme = True
         else:
-            reasons.append("order-book is balanced")
-    else:
-        reasons.append("candle data unavailable; using snapshot only")
+            reasons.append(f"funding is neutral ({funding:.6f})")
 
-    funding_extreme = False
-    if funding < long_funding_threshold:
-        score += 10
-        reasons.append(
-            f"funding is negative ({funding:.6f}), shorts pay longs — contrarian long bias"
-        )
-        funding_extreme = True
-    elif funding > short_funding_threshold:
-        score -= 10
-        reasons.append(
-            f"funding is highly positive ({funding:.6f}), longs pay shorts — contrarian short bias"
-        )
-        funding_extreme = True
-    else:
-        reasons.append(f"funding is neutral ({funding:.6f})")
+        if oi > 0:
+            reasons.append(f"open interest is {oi:,.0f}")
 
-    if oi > 0:
-        reasons.append(f"open interest is {oi:,.0f}")
-
-    action = "HOLD"
-    if score >= confidence_floor and funding_extreme and book_signal in ("bullish", "neutral"):
-        action = "BUY"
-    elif (
-        score <= (100 - confidence_floor)
-        and funding_extreme
-        and book_signal in ("bearish", "neutral")
-    ):
-        action = "SELL"
-
-    if score < confidence_floor and score > (100 - confidence_floor):
         action = "HOLD"
+        if score >= confidence_floor and funding_extreme and book_signal in ("bullish", "neutral"):
+            action = "BUY"
+        elif (
+            score <= (100 - confidence_floor)
+            and funding_extreme
+            and book_signal in ("bearish", "neutral")
+        ):
+            action = "SELL"
+
+        if score < confidence_floor and score > (100 - confidence_floor):
+            action = "HOLD"
 
     if forced_action in ("BUY", "SELL", "HOLD"):
         action = forced_action
@@ -176,7 +225,7 @@ def _build_signal(
 
     confidence = max(0, min(100, score))
     reasoning = (
-        f"Rule engine scored {confidence}/100. "
+        f"Signal scored {confidence}/100. "
         + " ".join(reasons)
         + (
             f". Suggested {action} ${size_usd} notional ({size_coin} {symbol}) at ${entry} with {leverage}x leverage."

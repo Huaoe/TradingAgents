@@ -1,5 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput } from '../types';
-import { account as mockAccount } from '../data/mockData';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput, PortfolioHistoryPoint } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -35,11 +34,14 @@ export async function fetchOrders(walletId?: string): Promise<Order[]> {
 
 export async function fetchAccount(walletId?: string): Promise<Account> {
   const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
-  try {
-    return await api<Account>(`/api/portfolio${qs}`);
-  } catch {
-    return mockAccount;
-  }
+  return api<Account>(`/api/portfolio${qs}`);
+}
+
+export async function fetchPortfolioHistory(walletId?: string, limit = 100): Promise<PortfolioHistoryPoint[]> {
+  const qs = new URLSearchParams();
+  if (walletId) qs.set('wallet_id', walletId);
+  qs.set('limit', String(limit));
+  return api<PortfolioHistoryPoint[]>(`/api/portfolio/history?${qs.toString()}`);
 }
 
 export interface ExecuteInput {

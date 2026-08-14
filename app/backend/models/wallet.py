@@ -14,6 +14,7 @@ class WalletBase(BaseModel):
     address: str = Field(..., min_length=10)
     chain: str = "hyperliquid"
     isDefault: bool = False
+    salt: str | None = None  # server-generated per-wallet salt; ignored on create
 
 
 class WalletCreate(WalletBase):

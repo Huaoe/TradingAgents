@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Save } from 'lucide-react';
+import { ArrowLeft, Save, AlertTriangle, Loader2 } from 'lucide-react';
 import { createStrategy, updateStrategy, fetchStrategy, fetchMarkets, fetchModelCatalog } from '../services/api';
 import type { Market, Strategy, StrategyInput, ModelCatalog } from '../types';
 
@@ -45,6 +45,38 @@ const TEMPLATE_DEFAULTS: Record<string, Partial<StrategyInput>> = {
   custom: { agents: ['Market', 'Funding', 'OrderBook'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
 };
 
+function PercentInput({
+  value,
+  onChange,
+  min,
+  max,
+  step,
+  placeholder,
+}: {
+  value: number | undefined;
+  onChange: (value: number) => void;
+  min?: number;
+  max?: number;
+  step?: number | string;
+  placeholder?: string;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value ?? ''}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value === '' ? 0 : Number(e.target.value))}
+        className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none pr-8"
+      />
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm pointer-events-none">%</span>
+    </div>
+  );
+}
+
 export function StrategyEditor() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
@@ -66,10 +98,11 @@ export function StrategyEditor() {
   const [catalog, setCatalog] = useState<ModelCatalog>({});
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(!isNew);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchMarkets().then((m) => setMarkets(m.filter((x) => x.type === 'perp').sort((a, b) => b.volume24h - a.volume24h))).catch(console.error);
-    fetchModelCatalog().then(setCatalog).catch(console.error);
+    fetchMarkets().then((m) => setMarkets(m.filter((x) => x.type === 'perp').sort((a, b) => b.volume24h - a.volume24h))).catch(() => setMarkets([]));
+    fetchModelCatalog().then(setCatalog).catch(() => setCatalog({}));
   }, []);
 
   useEffect(() => {
@@ -96,7 +129,7 @@ export function StrategyEditor() {
           },
         });
       })
-      .catch(console.error)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load strategy'))
       .finally(() => setLoading(false));
   }, [id, isNew]);
 
@@ -136,12 +169,59 @@ export function StrategyEditor() {
     }
   };
 
+  const validate = (): boolean => {
+    if (!strategy.name?.trim()) {
+      setError('Strategy name is required.');
+      return false;
+    }
+    if (!strategy.llmProvider || !strategy.llmMode) {
+      setError('LLM provider and mode are required.');
+      return false;
+    }
+    if (!strategy.llmModel) {
+      setError('An LLM model must be selected.');
+      return false;
+    }
+    if (modelOptions.length > 0 && !modelOptions.some((m) => m.value === strategy.llmModel)) {
+      setError('The selected LLM model is not available for the chosen provider and mode.');
+      return false;
+    }
+    if (!strategy.agents || strategy.agents.length === 0) {
+      setError('Select at least one agent.');
+      return false;
+    }
+    const rc = strategy.riskConfig;
+    if (!rc) {
+      setError('Risk configuration is missing.');
+      return false;
+    }
+    if ((rc.allocation ?? 0) < 0 || (rc.allocation ?? 0) > 100) {
+      setError('Trade allocation must be between 0% and 100%.');
+      return false;
+    }
+    if ((rc.confidenceFloor ?? 0) < 0 || (rc.confidenceFloor ?? 0) > 100) {
+      setError('Confidence floor must be between 0% and 100%.');
+      return false;
+    }
+    if ((rc.leverage ?? 0) < 1) {
+      setError('Max leverage must be at least 1x.');
+      return false;
+    }
+    if ((rc.longFundingThreshold ?? 0) < -100 || (rc.longFundingThreshold ?? 0) > 100) {
+      setError('Funding thresholds must be between -100% and 100%.');
+      return false;
+    }
+    if ((rc.shortFundingThreshold ?? 0) < -100 || (rc.shortFundingThreshold ?? 0) > 100) {
+      setError('Funding thresholds must be between -100% and 100%.');
+      return false;
+    }
+    setError('');
+    return true;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!strategy.name) {
-      alert('Name is required');
-      return;
-    }
+    if (!validate()) return;
     setSaving(true);
     try {
       const payload: StrategyInput = {
@@ -161,15 +241,18 @@ export function StrategyEditor() {
       }
       navigate('/strategies');
     } catch (err) {
-      console.error(err);
-      alert('Failed to save strategy');
+      setError(err instanceof Error ? err.message : 'Failed to save strategy');
     } finally {
       setSaving(false);
     }
   };
 
   if (loading) {
-    return <div className="text-gray-500">Loading...</div>;
+    return (
+      <div className="flex items-center gap-2 text-gray-500">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading...
+      </div>
+    );
   }
 
   return (
@@ -181,12 +264,19 @@ export function StrategyEditor() {
         <h1 className="text-2xl font-bold">{isNew ? 'New Strategy' : 'Edit Strategy'}</h1>
       </div>
 
+      {error && (
+        <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <div className="flex-1">{error}</div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl">
         <section className="p-4 rounded-xl border border-gray-800 bg-[#11141c] space-y-4">
           <h2 className="font-semibold text-violet-300">General</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Name</label>
+              <label className="block text-sm text-gray-400 mb-1">Name *</label>
               <input
                 type="text"
                 value={strategy.name}
@@ -219,7 +309,7 @@ export function StrategyEditor() {
         <section className="p-4 rounded-xl border border-gray-800 bg-[#11141c] space-y-4">
           <h2 className="font-semibold text-violet-300">Agents & Model</h2>
           <div>
-            <label className="block text-sm text-gray-400 mb-2">Active agents</label>
+            <label className="block text-sm text-gray-400 mb-2">Active agents *</label>
             <div className="flex flex-wrap gap-2">
               {ALL_AGENTS.map((agent) => (
                 <button
@@ -239,7 +329,7 @@ export function StrategyEditor() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Provider</label>
+              <label className="block text-sm text-gray-400 mb-1">Provider *</label>
               <select
                 value={strategy.llmProvider}
                 onChange={(e) => updateField('llmProvider', e.target.value)}
@@ -253,7 +343,7 @@ export function StrategyEditor() {
               </select>
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Mode</label>
+              <label className="block text-sm text-gray-400 mb-1">Mode *</label>
               <select
                 value={strategy.llmMode}
                 onChange={(e) => updateField('llmMode', e.target.value as 'quick' | 'deep')}
@@ -267,7 +357,7 @@ export function StrategyEditor() {
               </select>
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Model</label>
+              <label className="block text-sm text-gray-400 mb-1">Model *</label>
               <select
                 value={strategy.llmModel}
                 onChange={(e) => updateField('llmModel', e.target.value)}
@@ -317,44 +407,37 @@ export function StrategyEditor() {
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-1">Trade allocation (%)</label>
-              <input
-                type="number"
-                min={1}
+              <PercentInput
+                min={0}
                 max={100}
                 value={strategy.riskConfig?.allocation}
-                onChange={(e) => updateRisk('allocation', parseFloat(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+                onChange={(value) => updateRisk('allocation', value)}
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Confidence floor</label>
-              <input
-                type="number"
+              <label className="block text-sm text-gray-400 mb-1">Confidence floor (%)</label>
+              <PercentInput
                 min={0}
                 max={100}
+                step={1}
                 value={strategy.riskConfig?.confidenceFloor}
-                onChange={(e) => updateRisk('confidenceFloor', parseInt(e.target.value, 10))}
-                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+                onChange={(value) => updateRisk('confidenceFloor', value)}
               />
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-1">Long funding threshold (%)</label>
-              <input
-                type="number"
+              <PercentInput
                 step={0.01}
                 value={strategy.riskConfig?.longFundingThreshold}
-                onChange={(e) => updateRisk('longFundingThreshold', parseFloat(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+                onChange={(value) => updateRisk('longFundingThreshold', value)}
               />
             </div>
             <div>
               <label className="block text-sm text-gray-400 mb-1">Short funding threshold (%)</label>
-              <input
-                type="number"
+              <PercentInput
                 step={0.01}
                 value={strategy.riskConfig?.shortFundingThreshold}
-                onChange={(e) => updateRisk('shortFundingThreshold', parseFloat(e.target.value))}
-                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+                onChange={(value) => updateRisk('shortFundingThreshold', value)}
               />
             </div>
             <div>

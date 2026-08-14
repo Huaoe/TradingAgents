@@ -13,30 +13,58 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from backend.models.wallet import Wallet, WalletCreate, WalletUpdate
 
+_FIXED_SALT = b"tradingagents-wallet-v1"
+_SALT_LEN = 16
 
-def _derive_key(password: str) -> bytes:
-    """Derive a Fernet-compatible key from a user master password."""
-    # A fixed salt is acceptable for a localhost personal-use MVP.
-    # For stronger security use a unique salt per wallet or OS keyring.
+
+def _derive_key(password: str, salt: bytes) -> bytes:
+    """Derive a Fernet-compatible key from a user master password and per-wallet salt."""
     raw = hashlib.pbkdf2_hmac(
         "sha256",
         password.encode("utf-8"),
-        b"tradingagents-wallet-v1",
+        salt,
         iterations=100_000,
         dklen=32,
     )
     return base64.urlsafe_b64encode(raw)
 
 
-def encrypt_key(plaintext: str, password: str) -> str:
-    """Encrypt a private key with the user's master password."""
-    return Fernet(_derive_key(password)).encrypt(plaintext.encode("utf-8")).decode("utf-8")
+def _make_salt() -> bytes:
+    """Generate a new random salt for wallet encryption."""
+    return os.urandom(_SALT_LEN)
 
 
-def decrypt_key(token: str, password: str) -> str | None:
-    """Decrypt a private key. Returns None if the password is wrong."""
+def _encode_salt(salt: bytes) -> str:
+    return base64.b64encode(salt).decode("ascii")
+
+
+def _decode_salt(salt_b64: str | None) -> bytes:
+    """Decode a stored salt; fall back to the legacy fixed salt if absent or invalid."""
+    if not salt_b64:
+        return _FIXED_SALT
     try:
-        return Fernet(_derive_key(password)).decrypt(token.encode("utf-8")).decode("utf-8")
+        return base64.b64decode(salt_b64.encode("ascii"))
+    except Exception:
+        return _FIXED_SALT
+
+
+def encrypt_key(plaintext: str, password: str, salt: bytes | None = None) -> tuple[str, str]:
+    """Encrypt a private key with the user's master password.
+
+    Returns (encrypted_key, base64_salt). If no salt is provided, a new
+    random salt is generated.
+    """
+    if salt is None:
+        salt = _make_salt()
+    token = Fernet(_derive_key(password, salt)).encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    return token, _encode_salt(salt)
+
+
+def decrypt_key(token: str, password: str, salt_b64: str | None = None) -> str | None:
+    """Decrypt a private key. Returns None if the password is wrong or the salt is invalid."""
+    try:
+        salt = _decode_salt(salt_b64)
+        return Fernet(_derive_key(password, salt)).decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken:
         return None
 
@@ -60,12 +88,17 @@ def _init_table(conn: sqlite3.Connection) -> None:
             address TEXT NOT NULL,
             chain TEXT NOT NULL,
             encrypted_key TEXT NOT NULL,
+            salt TEXT,
             is_default INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
         """
     )
+    # Migrate existing tables that were created before the salt column existed.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(wallets)")}
+    if "salt" not in columns:
+        conn.execute("ALTER TABLE wallets ADD COLUMN salt TEXT")
     conn.commit()
 
 
@@ -84,6 +117,7 @@ class WalletStore:
 
     @staticmethod
     def _row_to_wallet(row: sqlite3.Row) -> Wallet:
+        keys = row.keys()
         return Wallet(
             id=row["id"],
             name=row["name"],
@@ -91,6 +125,7 @@ class WalletStore:
             chain=row["chain"],
             isDefault=bool(row["is_default"]),
             encryptedKey=row["encrypted_key"],
+            salt=row["salt"] if "salt" in keys else None,
             createdAt=row["created_at"],
             updatedAt=row["updated_at"],
         )
@@ -120,7 +155,7 @@ class WalletStore:
     def create_wallet(self, payload: WalletCreate) -> Wallet:
         wallet_id = f"wallet-{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
-        encrypted = encrypt_key(payload.privateKey, payload.masterPassword)
+        encrypted_key, salt_b64 = encrypt_key(payload.privateKey, payload.masterPassword)
 
         conn = _get_connection()
         if payload.isDefault:
@@ -128,15 +163,16 @@ class WalletStore:
 
         conn.execute(
             """
-            INSERT INTO wallets (id, name, address, chain, encrypted_key, is_default, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO wallets (id, name, address, chain, encrypted_key, salt, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 wallet_id,
                 payload.name,
                 payload.address,
                 payload.chain,
-                encrypted,
+                encrypted_key,
+                salt_b64,
                 int(payload.isDefault),
                 now,
                 now,
@@ -150,7 +186,8 @@ class WalletStore:
             address=payload.address,
             chain=payload.chain,
             isDefault=payload.isDefault,
-            encryptedKey=encrypted,
+            encryptedKey=encrypted_key,
+            salt=salt_b64,
             createdAt=now,
             updatedAt=now,
         )
@@ -191,7 +228,7 @@ class WalletStore:
         wallet = self.get_wallet(wallet_id)
         if not wallet:
             return None
-        return decrypt_key(wallet.encryptedKey, password)
+        return decrypt_key(wallet.encryptedKey, password, wallet.salt)
 
 
 def wallet_store() -> WalletStore:

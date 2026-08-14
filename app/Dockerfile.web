@@ -1,15 +1,13 @@
 # Web build for the Hyperliquid Trading Agent app.
 # Builds the React frontend and packages it with the FastAPI backend.
-FROM python:3.12-slim AS backend
-WORKDIR /build
-COPY . .
-RUN pip install --no-cache-dir -e .
+# Run from the repository root:
+#   docker build -f app/Dockerfile.web -t hyperliquid-app .
 
 FROM node:20-slim AS frontend
 WORKDIR /build
-COPY frontend/package*.json ./
+COPY app/frontend/package*.json ./
 RUN npm install
-COPY frontend .
+COPY app/frontend .
 RUN npm run build
 
 FROM python:3.12-slim
@@ -17,16 +15,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOST=0.0.0.0 \
     PORT=8000
+
 WORKDIR /app
 
-# Re-install the application in a clean image.
-COPY . .
+# The engine package is a local dependency of the backend.
+COPY engine ./engine
+RUN pip install --no-cache-dir --upgrade pip setuptools && \
+    pip install --no-cache-dir -e ./engine
+
+# Install the app backend.
+COPY app ./app
+WORKDIR /app/app
 RUN pip install --no-cache-dir -e .
 
 # Copy the built frontend assets into the image.
 COPY --from=frontend /build/dist ./frontend/dist
 
 EXPOSE 8000
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
 

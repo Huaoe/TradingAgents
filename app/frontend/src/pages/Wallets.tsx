@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Plus, Trash2, Star, Wallet as WalletIcon, Copy, Eye, EyeOff } from 'lucide-react';
+import { Plus, Trash2, Star, Wallet as WalletIcon } from 'lucide-react';
 import { Card } from '../components/Card';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/useWallet';
 import { createWallet, deleteWallet, updateWallet } from '../services/api';
 import type { Wallet } from '../types';
 
@@ -14,7 +14,6 @@ export function Wallets() {
   const { wallets, refreshWallets, selectedWallet, setSelectedWallet } = useWallet();
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState('');
-  const [visibleKey, setVisibleKey] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     refreshWallets();
@@ -181,10 +180,10 @@ export function Wallets() {
         {wallets.map((wallet) => (
           <Card
             key={wallet.id}
-            className={`flex items-start justify-between gap-4 ${selectedWallet?.id === wallet.id ? 'ring-1 ring-violet-500' : ''}`}
+            className={`flex flex-col sm:flex-row sm:items-start justify-between gap-4 ${selectedWallet?.id === wallet.id ? 'ring-1 ring-violet-500' : ''}`}
           >
             <div className="flex items-start gap-3">
-              <div className="p-2 rounded-lg bg-violet-500/10 text-violet-400">
+              <div className="p-2 rounded-lg bg-violet-500/10 text-violet-400 flex-shrink-0">
                 <WalletIcon className="w-5 h-5" />
               </div>
               <div>
@@ -196,27 +195,8 @@ export function Wallets() {
                     </span>
                   )}
                 </div>
-                <div className="text-sm text-gray-400 mt-0.5">{maskAddress(wallet.address)}</div>
+                <div className="text-sm text-gray-400 mt-0.5 font-mono">{maskAddress(wallet.address)}</div>
                 <div className="text-xs text-gray-500 mt-1">{wallet.chain}</div>
-                <div className="mt-3 flex items-center gap-2 text-xs text-gray-400 font-mono bg-gray-900/50 rounded px-2 py-1">
-                  <span>{visibleKey[wallet.id] ? wallet.encryptedKey : '•'.repeat(24)}</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setVisibleKey((prev) => ({ ...prev, [wallet.id]: !prev[wallet.id] }))
-                    }
-                    className="text-gray-500 hover:text-gray-300"
-                  >
-                    {visibleKey[wallet.id] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigator.clipboard.writeText(wallet.encryptedKey)}
-                    className="text-gray-500 hover:text-gray-300"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
-                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">

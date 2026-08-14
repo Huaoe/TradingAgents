@@ -32,6 +32,19 @@ def _init_tables(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS portfolio_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wallet_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            total_value REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_portfolio_history_wallet ON portfolio_history(wallet_id, timestamp)"
+    )
     conn.commit()
 
 
@@ -102,6 +115,38 @@ class PortfolioStore:
         conn.commit()
         conn.close()
 
+    def record_history(self, wallet_id: str, total_value: float) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        conn = _get_connection()
+        conn.execute(
+            "INSERT INTO portfolio_history (wallet_id, timestamp, total_value) VALUES (?, ?, ?)",
+            (wallet_id, now, total_value),
+        )
+        conn.commit()
+        conn.close()
+
+    def get_history(self, wallet_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        conn = _get_connection()
+        if wallet_id:
+            rows = conn.execute(
+                "SELECT * FROM portfolio_history WHERE wallet_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (wallet_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM portfolio_history ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        conn.close()
+        points = [
+            {
+                "timestamp": row["timestamp"],
+                "totalValue": float(row["total_value"]),
+            }
+            for row in reversed(rows)
+        ]
+        return points
+
 
 def portfolio_store() -> PortfolioStore:
     return PortfolioStore()
@@ -122,6 +167,7 @@ class PortfolioEngine:
         )
 
         open_positions = [p for p in positions if p["status"] == "open"]
+
         margin_used = sum(p["margin"] for p in open_positions)
         unrealized_pnl = sum(p["pnl"] for p in open_positions)
         total_notional = sum(p["notional"] for p in open_positions)
@@ -169,6 +215,14 @@ class PortfolioEngine:
             "llmTokensOut": usage["tokens_out"],
             "llmCalls": usage["llm_calls"],
         }
+
+    def record_history(self) -> None:
+        from backend.services.wallet_store import WalletStore
+
+        wallets = WalletStore().list_wallets()
+        for wallet in wallets:
+            summary = self.summary(wallet.id)
+            self.portfolio_store.record_history(wallet.id, summary["totalValue"])
 
     def can_open_position(
         self,

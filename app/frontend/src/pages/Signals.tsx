@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Check, X, Bot, Loader2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
+import { ExecuteModal } from '../components/ExecuteModal';
 import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal, executeSignal } from '../services/api';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/useWallet';
 import type { Signal, Strategy } from '../types';
 
 export function Signals() {
@@ -14,6 +15,11 @@ export function Signals() {
   const [useLlm, setUseLlm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'paper' | 'live'>('paper');
+  const [pendingSignal, setPendingSignal] = useState<Signal | null>(null);
+  const [masterPassword, setMasterPassword] = useState('');
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState('');
 
   useEffect(() => {
     refresh();
@@ -21,11 +27,15 @@ export function Signals() {
       setStrategies(list);
       const saved = list.find((s) => !s.id.startsWith('template-'));
       if (saved) setStrategyId(saved.id);
-    });
+    }).catch(() => setStrategies([]));
   }, []);
 
   const refresh = () => {
-    fetchSignals().then(setSignals).catch(() => setSignals([]));
+    setLoading(true);
+    fetchSignals()
+      .then(setSignals)
+      .catch(() => setSignals([]))
+      .finally(() => setLoading(false));
   };
 
   async function handleGenerate(e: React.FormEvent) {
@@ -42,19 +52,58 @@ export function Signals() {
     }
   }
 
-  const updateStatus = async (id: string, status: 'accepted' | 'rejected') => {
+  const initiateAccept = (signal: Signal) => {
+    if (!selectedWallet) {
+      setError('Select an active wallet before accepting a signal');
+      return;
+    }
+    if (mode === 'live') {
+      setPendingSignal(signal);
+      setModalError('');
+      setMasterPassword('');
+    } else {
+      executeAccepted(signal);
+    }
+  };
+
+  const executeAccepted = async (signal: Signal, livePassword = '') => {
+    setModalLoading(true);
+    setModalError('');
     try {
-      if (status === 'accepted') {
-        if (!selectedWallet) {
-          setError('Select an active wallet before accepting a signal');
-          return;
-        }
-        await acceptSignal(id);
-        await executeSignal({ signalId: id, walletId: selectedWallet.id, mode: 'paper' });
+      await acceptSignal(signal.id);
+      await executeSignal({
+        signalId: signal.id,
+        walletId: selectedWallet!.id,
+        mode,
+        masterPassword: livePassword || undefined,
+      });
+      setSignals((prev) => prev.map((s) => (s.id === signal.id ? { ...s, status: 'accepted' as const } : s)));
+      setPendingSignal(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Execution failed';
+      if (pendingSignal) {
+        setModalError(msg);
       } else {
-        await rejectSignal(id);
+        setError(msg);
       }
-      setSignals((prev) => prev.map((s) => (s.id === id ? { ...s, status } : s)));
+    } finally {
+      setModalLoading(false);
+    }
+  };
+
+  const confirmModal = () => {
+    if (!pendingSignal) return;
+    if (mode === 'live' && !masterPassword) {
+      setModalError('Master password is required for live execution');
+      return;
+    }
+    executeAccepted(pendingSignal, masterPassword);
+  };
+
+  const rejectStatus = async (id: string) => {
+    try {
+      await rejectSignal(id);
+      setSignals((prev) => prev.map((s) => (s.id === id ? { ...s, status: 'rejected' as const } : s)));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Status update failed');
     }
@@ -186,19 +235,32 @@ export function Signals() {
             </div>
 
             {sig.status === 'pending' ? (
-              <div className="flex gap-3 mt-auto">
-                <button
-                  onClick={() => updateStatus(sig.id, 'accepted')}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors"
-                >
-                  <Check className="w-4 h-4" /> Accept
-                </button>
-                <button
-                  onClick={() => updateStatus(sig.id, 'rejected')}
-                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium transition-colors"
-                >
-                  <X className="w-4 h-4" /> Reject
-                </button>
+              <div className="space-y-3 mt-auto">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-400">Execution mode</span>
+                  <select
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value as 'paper' | 'live')}
+                    className="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-violet-500"
+                  >
+                    <option value="paper">Paper</option>
+                    <option value="live">Live</option>
+                  </select>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => initiateAccept(sig)}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition-colors"
+                  >
+                    <Check className="w-4 h-4" /> Accept
+                  </button>
+                  <button
+                    onClick={() => rejectStatus(sig.id)}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-medium transition-colors"
+                  >
+                    <X className="w-4 h-4" /> Reject
+                  </button>
+                </div>
               </div>
             ) : (
               <div className={`text-sm font-medium text-center py-2 rounded-lg border ${sig.status === 'accepted' ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/5' : 'text-rose-400 border-rose-500/30 bg-rose-500/5'}`}>
@@ -207,8 +269,26 @@ export function Signals() {
             )}
           </Card>
         ))}
-        {signals.length === 0 && <div className="text-gray-500 text-sm">No signals yet. Generate one above.</div>}
+        {loading && signals.length === 0 && (
+          <div className="text-gray-500 text-sm flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading signals...
+          </div>
+        )}
+        {!loading && signals.length === 0 && <div className="text-gray-500 text-sm">No signals yet. Generate one above.</div>}
       </div>
+
+      <ExecuteModal
+        isOpen={!!pendingSignal}
+        signal={pendingSignal}
+        wallet={selectedWallet}
+        mode={mode}
+        masterPassword={masterPassword}
+        setMasterPassword={setMasterPassword}
+        loading={modalLoading}
+        error={modalError}
+        onClose={() => setPendingSignal(null)}
+        onConfirm={confirmModal}
+      />
     </div>
   );
 }

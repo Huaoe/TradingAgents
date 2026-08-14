@@ -1,0 +1,38 @@
+# Repository
+.git
+.github
+.gitmodules
+.venv
+.env
+.env.*
+.env.example
+.DS_Store
+.devin
+
+# Docs / scripts not needed at runtime
+docs
+scripts
+test.py
+
+# Build artifacts
+**/__pycache__
+**/*.egg-info
+**/.pytest_cache
+build
+dist
+
+# Engine/runtime outputs
+results
+worklog
+eval_results
+
+# Frontend
+**/node_modules
+app/frontend/dist
+
+# Local databases (recreated at runtime, may hold sensitive wallet data)
+**/*.db
+
+# Docker/compose files themselves
+Dockerfile*
+docker-compose*.yml

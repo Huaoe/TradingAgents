@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
-import { WalletProvider } from './context/WalletContext';
+import { WalletProvider } from './context/WalletProvider';
 import { Dashboard } from './pages/Dashboard';
 import { Scanner } from './pages/Scanner';
 import { Signals } from './pages/Signals';

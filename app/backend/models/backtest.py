@@ -58,6 +58,8 @@ class BacktestSummary(BaseModel):
     avgTradeReturnPct: float
     avgWinPct: float
     avgLossPct: float
+    avgConfidence: float = 0.0
+    avgSignalConfidence: float = 0.0
     confidenceFloor: int = 60
     leverage: int = 3
     allocation: float = 0.10

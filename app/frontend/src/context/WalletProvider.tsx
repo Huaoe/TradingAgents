@@ -1,16 +1,7 @@
-import { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { WalletContext } from './WalletContext';
 import { fetchWallets } from '../services/api';
 import type { Wallet } from '../types';
-
-interface WalletContextValue {
-  wallets: Wallet[];
-  selectedWallet: Wallet | null;
-  setSelectedWallet: (wallet: Wallet | null) => void;
-  refreshWallets: () => Promise<void>;
-  loading: boolean;
-}
-
-const WalletContext = createContext<WalletContextValue | undefined>(undefined);
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [wallets, setWallets] = useState<Wallet[]>([]);
@@ -42,12 +33,4 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       {children}
     </WalletContext.Provider>
   );
-}
-
-export function useWallet() {
-  const ctx = useContext(WalletContext);
-  if (!ctx) {
-    throw new Error('useWallet must be used within a WalletProvider');
-  }
-  return ctx;
 }

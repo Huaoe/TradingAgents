@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { Card } from '../components/Card';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/useWallet';
 import { fetchJournal } from '../services/api';
 import type { JournalEntry } from '../types';
 

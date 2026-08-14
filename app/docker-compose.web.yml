@@ -1,19 +1,18 @@
 services:
   app:
     build:
-      context: .
-      dockerfile: Dockerfile.web
+      context: ..
+      dockerfile: app/Dockerfile.web
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ../.env
     environment:
       - HOST=0.0.0.0
       - PORT=8000
       - LIVE_TRADING=false
     volumes:
-      - app_data:/app/backend/data
-      - app_data:/app/tradingagents/data
+      - app_data:/app/app/backend/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]

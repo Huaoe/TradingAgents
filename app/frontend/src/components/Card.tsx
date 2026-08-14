@@ -1,7 +1,12 @@
-export function Card({ children, title, className = '' }: { children: React.ReactNode; title?: string; className?: string }) {
+export function Card({ children, title, actions, className = '' }: { children: React.ReactNode; title?: React.ReactNode; actions?: React.ReactNode; className?: string }) {
   return (
     <div className={`bg-[#11131a] border border-gray-800 rounded-xl p-5 ${className}`}>
-      {title && <h3 className="text-sm font-medium text-gray-200 mb-4">{title}</h3>}
+      {(title || actions) && (
+        <div className="flex items-center justify-between mb-4">
+          {title && <h3 className="text-sm font-medium text-gray-200">{title}</h3>}
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
+        </div>
+      )}
       {children}
     </div>
   );

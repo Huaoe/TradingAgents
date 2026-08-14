@@ -214,6 +214,33 @@ class ExecutionStore:
         conn.close()
         return [_row_to_position(r) for r in rows]
 
+    def list_open_positions(self, wallet_id: str | None = None) -> list[dict[str, Any]]:
+        conn = _get_connection()
+        if wallet_id:
+            rows = conn.execute(
+                "SELECT * FROM positions WHERE status = 'open' AND wallet_id = ? ORDER BY opened_at DESC",
+                (wallet_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM positions WHERE status = 'open' ORDER BY opened_at DESC").fetchall()
+        conn.close()
+        return [_row_to_position(r) for r in rows]
+
+    def mark_position_price(
+        self,
+        position_id: str,
+        mark_price: float,
+        pnl: float,
+        pnl_pct: float,
+    ) -> None:
+        conn = _get_connection()
+        conn.execute(
+            "UPDATE positions SET mark_price = ?, pnl = ?, pnl_pct = ? WHERE id = ?",
+            (mark_price, pnl, pnl_pct, position_id),
+        )
+        conn.commit()
+        conn.close()
+
     def get_position(self, position_id: str) -> dict[str, Any] | None:
         conn = _get_connection()
         row = conn.execute("SELECT * FROM positions WHERE id = ?", (position_id,)).fetchone()

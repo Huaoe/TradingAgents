@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bell, Check } from 'lucide-react';
 import { Card } from '../components/Card';
-import { useWallet } from '../context/WalletContext';
+import { useWallet } from '../context/useWallet';
 import { fetchAlerts, markAlertRead, markAllAlertsRead } from '../services/api';
 import type { Alert } from '../types';
 

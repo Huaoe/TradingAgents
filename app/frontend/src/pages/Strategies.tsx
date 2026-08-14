@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Bot, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Bot, ChevronRight, Loader2, AlertTriangle, RefreshCcw } from 'lucide-react';
 import { fetchStrategies, deleteStrategy } from '../services/api';
 import type { Strategy } from '../types';
 
@@ -26,6 +26,7 @@ const TEMPLATE_CARDS: { template: string; title: string; description: string }[]
 export function Strategies() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadStrategies();
@@ -33,11 +34,12 @@ export function Strategies() {
 
   const loadStrategies = async () => {
     setLoading(true);
+    setError('');
     try {
       const data = await fetchStrategies();
       setStrategies(data);
     } catch (err) {
-      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to load strategies');
     } finally {
       setLoading(false);
     }
@@ -93,8 +95,26 @@ export function Strategies() {
 
       <section>
         <h2 className="text-lg font-semibold mb-3">Saved Strategies</h2>
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-200 text-sm flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <div className="flex-1">{error}</div>
+            <button
+              onClick={loadStrategies}
+              disabled={loading}
+              className="text-violet-400 hover:text-violet-300 text-xs font-medium inline-flex items-center gap-1"
+            >
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCcw className="w-3 h-3" />}
+              Retry
+            </button>
+          </div>
+        )}
         {loading ? (
-          <p className="text-gray-500 text-sm">Loading...</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-24 bg-gray-800/50 rounded-xl animate-pulse" />
+            ))}
+          </div>
         ) : strategies.length === 0 ? (
           <p className="text-gray-500 text-sm">No saved strategies yet. Pick a template to get started.</p>
         ) : (

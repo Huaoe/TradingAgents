@@ -85,6 +85,11 @@ export interface Account {
   llmCalls?: number;
 }
 
+export interface PortfolioHistoryPoint {
+  timestamp: string;
+  totalValue: number;
+}
+
 export type ExecutionMode = 'manual' | 'auto-confirm' | 'auto';
 export type LLMMode = 'quick' | 'deep';
 
@@ -148,6 +153,8 @@ export interface BacktestSummary {
   avgTradeReturnPct: number;
   avgWinPct: number;
   avgLossPct: number;
+  avgConfidence?: number;
+  avgSignalConfidence?: number;
   confidenceFloor: number;
   leverage: number;
   allocation: number;
