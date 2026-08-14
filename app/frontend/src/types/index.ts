@@ -147,6 +147,13 @@ export interface BacktestSummary {
   avgTradeReturnPct: number;
   avgWinPct: number;
   avgLossPct: number;
+  confidenceFloor: number;
+  leverage: number;
+  allocation: number;
+  finalSignal: number;
+  longSignals: number;
+  shortSignals: number;
+  flatSignals: number;
   startTime: string;
   endTime: string;
   interval: string;
@@ -175,6 +182,7 @@ export interface BacktestResult {
   summary: BacktestSummary;
   equity: { time: string; equity: number }[];
   drawdown: { time: string; drawdown: number }[];
+  price: { time: string; close: number }[];
   trades: BacktestTrade[];
   monthlyReturns: Record<string, number> | null;
 }

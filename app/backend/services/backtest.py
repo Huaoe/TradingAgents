@@ -418,10 +418,17 @@ def run_backtest(
     signals = _compute_signals(df, strategy)
     df["signal"] = signals
 
+    confidence_floor_value = int(_safe_float(cfg.get("confidenceFloor"), 60))
+    final_signal = int(df["signal"].iloc[-1]) if not df.empty else 0
+    long_signals = int((df["signal"] == 1).sum())
+    short_signals = int((df["signal"] == -1).sum())
+    flat_signals = int((df["signal"] == 0).sum())
+
     # Simulation state
     cash = float(initial_balance)
     equity_curve: list[dict[str, Any]] = []
     drawdown_curve: list[dict[str, Any]] = []
+    price_curve: list[dict[str, Any]] = []
     trades: list[dict[str, Any]] = []
     peak = cash
     position: int = 0  # -1, 0, 1
@@ -447,6 +454,7 @@ def run_backtest(
             peak = total
         dd = (peak - total) / peak if peak > 0 else 0.0
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
+        price_curve.append({"time": current_time.isoformat(), "close": round(float(current_price), 8)})
 
     def open_position(new_position: int, price: float, time: pd.Timestamp) -> None:
         nonlocal \
@@ -607,6 +615,13 @@ def run_backtest(
         "avgTradeReturnPct": _fmt(avg_trade_return),
         "avgWinPct": _fmt(avg_win),
         "avgLossPct": _fmt(avg_loss),
+        "confidenceFloor": confidence_floor_value,
+        "leverage": leverage,
+        "allocation": _fmt(allocation),
+        "finalSignal": final_signal,
+        "longSignals": long_signals,
+        "shortSignals": short_signals,
+        "flatSignals": flat_signals,
         "startTime": df.index[0].isoformat(),
         "endTime": df.index[-1].isoformat(),
         "interval": interval,
@@ -618,6 +633,7 @@ def run_backtest(
         "summary": summary,
         "equity": equity_curve,
         "drawdown": drawdown_curve,
+        "price": price_curve,
         "trades": trades,
         "monthlyReturns": monthly_returns,
     }

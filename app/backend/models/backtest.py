@@ -57,6 +57,13 @@ class BacktestSummary(BaseModel):
     avgTradeReturnPct: float
     avgWinPct: float
     avgLossPct: float
+    confidenceFloor: int = 60
+    leverage: int = 3
+    allocation: float = 0.10
+    finalSignal: int = 0
+    longSignals: int = 0
+    shortSignals: int = 0
+    flatSignals: int = 0
     startTime: str
     endTime: str
     interval: str

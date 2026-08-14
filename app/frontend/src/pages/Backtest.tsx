@@ -41,6 +41,41 @@ function formatNumber(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+const STAT_HINTS: Record<string, string> = {
+  'Total Return': 'Total percentage gain or loss over the backtest period.',
+  'Benchmark Return': 'Buy-and-hold return for the same symbol and period.',
+  'Sharpe Ratio': 'Risk-adjusted return; higher is better.',
+  'Max Drawdown': 'Largest peak-to-trough decline in equity.',
+  'Win Rate': 'Percentage of trades that closed with a positive net PnL.',
+  'Profit Factor': 'Gross profit divided by gross loss.',
+  '# Trades': 'Total number of round-trip trades executed.',
+  'Final Balance': 'Account value at the end of the backtest.',
+  'Avg Win': 'Average return percent of winning trades.',
+  'Avg Loss': 'Average return percent of losing trades.',
+  'Confidence Floor': 'Minimum confidence score needed to enter a long or short position.',
+  'Final Signal': 'The strategy\'s most recent bar signal.',
+  'Signal Mix': 'Number of long, short, and flat bars over the period.',
+  Leverage: 'Effective leverage used per position.',
+  Allocation: 'Percentage of the portfolio allocated to each trade.',
+};
+
+const TRADE_HINTS: Record<string, string> = {
+  Entry: 'Time the position was opened.',
+  Exit: 'Time the position was closed.',
+  Side: 'LONG or SHORT direction of the trade.',
+  'Entry $': 'Entry price of the trade.',
+  'Exit $': 'Exit price of the trade.',
+  Size: 'Position size in coins.',
+  'Net PnL': 'Net profit or loss after fees and funding.',
+  Return: 'Gross return percent on the trade.',
+};
+
+function formatSide(signal: number) {
+  if (signal > 0) return 'LONG';
+  if (signal < 0) return 'SHORT';
+  return 'FLAT';
+}
+
 export function Backtest() {
   const [searchParams] = useSearchParams();
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -113,6 +148,22 @@ export function Backtest() {
       setError(err instanceof Error ? err.message : 'Activation failed');
     }
   }
+
+  const priceChartData = useMemo(() => {
+    if (!result) return [];
+    const data = result.price.map((p) => ({ ...p, buy: null as number | null, sell: null as number | null }));
+    const map = new Map(data.map((d, i) => [d.time, i]));
+    for (const t of result.trades) {
+      const idx = map.get(t.entryTime);
+      if (idx == null) continue;
+      if (t.side === 'LONG') {
+        data[idx].buy = t.entryPrice;
+      } else {
+        data[idx].sell = t.entryPrice;
+      }
+    }
+    return data;
+  }, [result]);
 
   const stats = result?.summary;
 
@@ -309,6 +360,31 @@ export function Backtest() {
               icon={DollarSign}
               positive={stats.finalBalance >= stats.initialBalance}
             />
+            <StatCard
+              label="Avg Win"
+              value={formatPct(stats.avgWinPct)}
+              icon={TrendingUp}
+              positive={stats.avgWinPct >= 0}
+            />
+            <StatCard
+              label="Avg Loss"
+              value={formatPct(stats.avgLossPct)}
+              icon={TrendingDown}
+              positive={false}
+            />
+            <StatCard label="Confidence Floor" value={String(stats.confidenceFloor)} icon={Percent} />
+            <StatCard label="Final Signal" value={formatSide(stats.finalSignal)} icon={Activity} />
+            <StatCard
+              label="Signal Mix"
+              value={`L ${stats.longSignals} · S ${stats.shortSignals} · F ${stats.flatSignals}`}
+              icon={BarChart3}
+            />
+            <StatCard label="Leverage" value={`${stats.leverage}x`} icon={Activity} />
+            <StatCard
+              label="Allocation"
+              value={formatPct(stats.allocation * 100)}
+              icon={DollarSign}
+            />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -369,19 +445,61 @@ export function Backtest() {
             </Card>
           </div>
 
+          <Card title="Price + Buy / Sell Signals">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={priceChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis
+                    dataKey="time"
+                    tickFormatter={(t) => new Date(t).toLocaleDateString()}
+                    stroke="#9ca3af"
+                    tick={{ fill: '#9ca3af', fontSize: 10 }}
+                    minTickGap={30}
+                  />
+                  <YAxis
+                    stroke="#9ca3af"
+                    tick={{ fill: '#9ca3af', fontSize: 10 }}
+                    tickFormatter={(v) => `$${Number(v).toLocaleString()}`}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151' }}
+                    labelFormatter={(label) => new Date(String(label)).toLocaleString()}
+                    formatter={(value, name) => [name === 'close' ? formatUSD(Number(value)) : `$${Number(value).toLocaleString()}`, name as string]}
+                  />
+                  <Line type="monotone" dataKey="close" stroke="#38bdf8" strokeWidth={2} dot={false} name="Price" />
+                  <Line
+                    dataKey="buy"
+                    stroke="transparent"
+                    dot={{ r: 5, fill: '#10b981' }}
+                    isAnimationActive={false}
+                    name="Buy (Long)"
+                  />
+                  <Line
+                    dataKey="sell"
+                    stroke="transparent"
+                    dot={{ r: 5, fill: '#ef4444' }}
+                    isAnimationActive={false}
+                    name="Sell (Short)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
           <Card title={`Trades (${result!.trades.length})`}>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-gray-400 border-b border-gray-800">
-                    <th className="text-left py-2 px-2">Entry</th>
-                    <th className="text-left py-2 px-2">Exit</th>
-                    <th className="text-left py-2 px-2">Side</th>
-                    <th className="text-right py-2 px-2">Entry $</th>
-                    <th className="text-right py-2 px-2">Exit $</th>
-                    <th className="text-right py-2 px-2">Size</th>
-                    <th className="text-right py-2 px-2">Net PnL</th>
-                    <th className="text-right py-2 px-2">Return</th>
+                    <th className="text-left py-2 px-2" title={TRADE_HINTS.Entry}>Entry</th>
+                    <th className="text-left py-2 px-2" title={TRADE_HINTS.Exit}>Exit</th>
+                    <th className="text-left py-2 px-2" title={TRADE_HINTS.Side}>Side</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS['Entry $']}>Entry $</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS['Exit $']}>Exit $</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS.Size}>Size</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS['Net PnL']}>Net PnL</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS.Return}>Return</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -433,7 +551,10 @@ function StatCard({
   const color =
     positive === undefined ? 'text-violet-400' : positive ? 'text-emerald-400' : 'text-red-400';
   return (
-    <div className="bg-[#11131a] border border-gray-800 rounded-xl p-4">
+    <div
+      className="bg-[#11131a] border border-gray-800 rounded-xl p-4 cursor-help"
+      title={STAT_HINTS[label]}
+    >
       <div className="flex items-center gap-2 text-gray-400 mb-1">
         <Icon className="w-4 h-4" />
         <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
