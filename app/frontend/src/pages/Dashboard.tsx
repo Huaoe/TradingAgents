@@ -68,6 +68,20 @@ export function Dashboard() {
         <Stat label="Margin Used" value={`$${account.marginUsed.toLocaleString()}`} sub={`${((account.marginUsed / account.totalValue) * 100).toFixed(1)}% of account`} />
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <Stat
+          label="LLM Spend"
+          value={`$${(account.llmSpend ?? 0).toFixed(4)}`}
+          sub={`${((account.llmTokensIn ?? 0) + (account.llmTokensOut ?? 0)).toLocaleString()} tokens @ configured rates`}
+        />
+        <Stat
+          label="LLM Tokens"
+          value={`${((account.llmTokensIn ?? 0) + (account.llmTokensOut ?? 0)).toLocaleString()}`}
+          sub={`${(account.llmTokensIn ?? 0).toLocaleString()} in / ${(account.llmTokensOut ?? 0).toLocaleString()} out`}
+        />
+        <Stat label="LLM Calls" value={`${account.llmCalls ?? 0}`} sub="Total model invocations" />
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card className="lg:col-span-2">
           <h2 className="text-lg font-medium mb-4">Equity Curve (Paper)</h2>

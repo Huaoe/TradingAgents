@@ -78,6 +78,10 @@ export interface Account {
   maxExposureSymbol?: string;
   maxExposureNotional?: number;
   maxLeverage?: number;
+  llmSpend?: number;
+  llmTokensIn?: number;
+  llmTokensOut?: number;
+  llmCalls?: number;
 }
 
 export type ExecutionMode = 'manual' | 'auto-confirm' | 'auto';

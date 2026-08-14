@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.execution_store import ExecutionStore
+from backend.services.llm_usage_store import LlmUsageStore
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.db")
 DEFAULT_PAPER_BALANCE = 10_000.0
@@ -145,6 +146,8 @@ class PortfolioEngine:
         max_symbol = max(exposure_by_symbol, key=exposure_by_symbol.get, default="")
         max_exposure = exposure_by_symbol.get(max_symbol, 0.0)
 
+        usage = LlmUsageStore().get_total()
+
         return {
             "walletId": wallet_id,
             "mode": "paper"
@@ -161,6 +164,10 @@ class PortfolioEngine:
             "maxExposureSymbol": max_symbol,
             "maxExposureNotional": round(max_exposure, 2),
             "maxLeverage": max((p["leverage"] for p in open_positions), default=0),
+            "llmSpend": round(usage["spend"], 4),
+            "llmTokensIn": usage["tokens_in"],
+            "llmTokensOut": usage["tokens_out"],
+            "llmCalls": usage["llm_calls"],
         }
 
     def can_open_position(

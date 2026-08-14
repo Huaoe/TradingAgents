@@ -16,6 +16,8 @@ from typing import Any
 import pandas as pd
 
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.llm_tracker import LlmUsageTracker
+from backend.services.llm_usage_store import LlmUsageStore
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
@@ -265,7 +267,8 @@ def _generate_signal_llm(
     config = DEFAULT_CONFIG.copy()
     # Use Hyperliquid-style crypto pipeline and today's date.
     trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    ta = TradingAgentsGraph(debug=False, config=config)
+    tracker = LlmUsageTracker()
+    ta = TradingAgentsGraph(debug=False, config=config, callbacks=[tracker])
     final_state, decision = ta.propagate(symbol.upper(), trade_date, asset_type="crypto")
     full_text = final_state.get("final_trade_decision", "") or str(decision)
     rating = parse_rating(full_text)
@@ -283,4 +286,10 @@ def _generate_signal_llm(
     signal["agents"] = ["LLM-Research", "LLM-Trader", "LLM-Risk"]
     signal["reasoning"] = f"LLM Portfolio Manager rating: {rating}. {signal['reasoning']}"
     signal["meta"]["llmDecision"] = full_text
+    signal["meta"]["llmUsage"] = {
+        "tokensIn": tracker.tokens_in,
+        "tokensOut": tracker.tokens_out,
+        "llmCalls": tracker.llm_calls,
+    }
+    LlmUsageStore().record(tracker.tokens_in, tracker.tokens_out, tracker.llm_calls)
     return signal

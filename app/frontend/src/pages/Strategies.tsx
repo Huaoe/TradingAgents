@@ -13,6 +13,9 @@ const TEMPLATE_CARDS: { template: string; title: string; description: string }[]
   { template: 'scalp_momentum', title: 'Scalp Momentum', description: 'Short-term 5-15m burst plays with tight stops.' },
   { template: 'news_event', title: 'News Event', description: 'React to catalysts with News and Sentiment agents.' },
   { template: 'basis_arbitrage', title: 'Basis Arbitrage', description: 'Trade spot vs perpetual convergence.' },
+  { template: 'grid_trading', title: 'Grid Trading', description: 'Buy near range lows, sell/short near range highs in sideways markets.' },
+  { template: 'dual_thrust', title: 'Dual Thrust', description: 'Classic range-breakout bands built from recent high/low/close spread.' },
+  { template: 'turtle_breakout', title: 'Turtle Breakout', description: 'Donchian-channel breakout in the spirit of the Turtle Trading system.' },
   { template: 'custom', title: 'Custom', description: 'Build your own strategy from scratch.' },
 ];
 

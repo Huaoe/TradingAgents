@@ -21,6 +21,10 @@ class PortfolioSummary(BaseModel):
     maxExposureSymbol: str
     maxExposureNotional: float
     maxLeverage: int
+    llmSpend: float = 0.0
+    llmTokensIn: int = 0
+    llmTokensOut: int = 0
+    llmCalls: int = 0
 
 
 class LiveModeRequest(BaseModel):

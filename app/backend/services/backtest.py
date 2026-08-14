@@ -83,6 +83,16 @@ def _prepare_candles(candles: list[dict[str, Any]]) -> pd.DataFrame:
     df["lowerBB"] = df["sma20"] - 2 * df["std20"]
     df["rsi14"] = _rsi(df["close"], 14)
     df["atr14"] = _atr(df, 14)
+    # Donchian channel (prior N bars, excluding the current bar) — used by the
+    # Turtle Breakout and Grid Trading templates.
+    df["donchianHigh"] = df["high"].rolling(20).max().shift(1)
+    df["donchianLow"] = df["low"].rolling(20).min().shift(1)
+    # Dual Thrust range inputs (prior N bars, excluding the current bar).
+    dt_lookback = 4
+    df["dtHH"] = df["high"].rolling(dt_lookback).max().shift(1)
+    df["dtHC"] = df["close"].rolling(dt_lookback).max().shift(1)
+    df["dtLC"] = df["close"].rolling(dt_lookback).min().shift(1)
+    df["dtLL"] = df["low"].rolling(dt_lookback).min().shift(1)
     return df
 
 
@@ -214,6 +224,48 @@ def _signal_for_bar(
             score += funding_score()
         else:
             return 0
+    elif template == "grid-trading":
+        donchian_high = row.get("donchianHigh")
+        donchian_low = row.get("donchianLow")
+        if pd.isna(donchian_high) or pd.isna(donchian_low) or donchian_high == donchian_low:
+            return 0
+        range_span = donchian_high - donchian_low
+        position_in_range = (close - donchian_low) / range_span
+        if position_in_range <= 0.2:
+            score = 70
+        elif position_in_range >= 0.8:
+            score = 30
+        else:
+            return 0
+        score += funding_score()
+    elif template == "dual-thrust":
+        hh, hc, lc, ll = row.get("dtHH"), row.get("dtHC"), row.get("dtLC"), row.get("dtLL")
+        if pd.isna(hh) or pd.isna(hc) or pd.isna(lc) or pd.isna(ll):
+            return 0
+        thrust_range = max(hh - lc, hc - ll)
+        k1 = k2 = 0.5
+        open_price = row["open"]
+        upper_band = open_price + k1 * thrust_range
+        lower_band = open_price - k2 * thrust_range
+        if close > upper_band:
+            score = 75
+        elif close < lower_band:
+            score = 25
+        else:
+            return 0
+        score += funding_score()
+    elif template == "turtle-breakout":
+        donchian_high = row.get("donchianHigh")
+        donchian_low = row.get("donchianLow")
+        if pd.isna(donchian_high) or pd.isna(donchian_low):
+            return 0
+        if close > donchian_high:
+            score = 75
+        elif close < donchian_low:
+            score = 25
+        else:
+            return 0
+        score += funding_score()
     else:  # custom / fallback
         if trend_up:
             score += 15

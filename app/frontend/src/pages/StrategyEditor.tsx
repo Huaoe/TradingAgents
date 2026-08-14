@@ -35,6 +35,9 @@ const TEMPLATE_DEFAULTS: Record<string, Partial<StrategyInput>> = {
   scalp_momentum: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 6, allocation: 8, confidenceFloor: 68 } },
   news_event: { agents: ['News', 'Sentiment', 'Market'], riskConfig: { leverage: 4, allocation: 10, confidenceFloor: 70 } },
   basis_arbitrage: { agents: ['Market', 'Funding'], riskConfig: { leverage: 2, allocation: 30, confidenceFloor: 75 } },
+  grid_trading: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 2, allocation: 10, confidenceFloor: 60 } },
+  dual_thrust: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
+  turtle_breakout: { agents: ['Market', 'Funding'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
   custom: { agents: ['Market', 'Funding', 'OrderBook'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
 };
 

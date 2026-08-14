@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Play, Loader2, AlertCircle } from 'lucide-react';
+import { Play, Loader2, AlertCircle, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
 import { fetchMarkets, fetchStrategies, runAnalysis } from '../services/api';
 import type { Market, Signal, Strategy } from '../types';
@@ -11,7 +11,9 @@ export function Scanner() {
   const [analyzing, setAnalyzing] = useState<string | null>(null);
   const [latestSignal, setLatestSignal] = useState<Signal | null>(null);
   const [signals, setSignals] = useState<Record<string, Signal>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
 
   useEffect(() => {
     fetchMarkets().then(setMarkets);
@@ -25,6 +27,7 @@ export function Scanner() {
       const signal = await runAnalysis(symbol, selectedStrategyId || undefined);
       setSignals((prev) => ({ ...prev, [symbol]: signal }));
       setLatestSignal(signal);
+      setExpanded((prev) => ({ ...prev, [symbol]: true }));
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Analysis failed';
       setError(`${symbol}: ${message}`);
@@ -34,6 +37,21 @@ export function Scanner() {
     }
   };
 
+  const toggleExpanded = (symbol: string) => {
+    setExpanded((prev) => ({ ...prev, [symbol]: !prev[symbol] }));
+  };
+
+  const getSuggestedStrategies = (symbol: string): Strategy[] => {
+    const marketStrategies = strategies.filter((s) => s.markets.includes(symbol));
+    if (marketStrategies.length) return marketStrategies;
+    if (selectedStrategyId) return strategies.filter((s) => s.id === selectedStrategyId).slice(0, 1);
+    return strategies.slice(0, 3);
+  };
+
+  const filteredMarkets = markets.filter((m) =>
+    `${m.symbol} ${m.name}`.toLowerCase().includes(filter.toLowerCase())
+  );
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -42,6 +60,16 @@ export function Scanner() {
           <p className="text-sm text-gray-400 mt-1">Run TradingAgents analysis on Hyperliquid markets</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input
+              type="text"
+              placeholder="Filter markets..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="pl-9 pr-3 py-2 rounded-lg bg-[#11141c] border border-gray-800 text-sm focus:border-violet-500 outline-none"
+            />
+          </div>
           <label className="text-sm text-gray-400">Strategy</label>
           <select
             value={selectedStrategyId}
@@ -97,40 +125,81 @@ export function Scanner() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-800">
-            {markets.map((m) => {
+            {filteredMarkets.map((m) => {
               const rowSignal = signals[m.symbol];
+              const suggested = rowSignal ? getSuggestedStrategies(m.symbol) : [];
               return (
-                <tr key={m.symbol} className="hover:bg-gray-800/30 transition-colors">
-                  <td className="p-4 font-medium">{m.symbol} <span className="text-gray-500 font-normal">{m.name}</span></td>
-                  <td className="p-4 text-gray-400 capitalize">{m.type}</td>
-                  <td className="p-4">${m.price.toLocaleString()}</td>
-                  <td className={`p-4 ${m.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{m.change24h >= 0 ? '+' : ''}{m.change24h}%</td>
-                  <td className="p-4 text-gray-400">${(m.volume24h / 1e6).toFixed(1)}M</td>
-                  <td className="p-4 text-gray-400">{m.funding !== undefined ? `${(m.funding * 100).toFixed(4)}%` : '-'}</td>
-                  <td className="p-4 text-gray-400">{m.openInterest !== undefined ? `$${(m.openInterest * (m.price || 0) / 1e6).toFixed(1)}M` : '-'}</td>
-                  <td className="p-4">
-                    {rowSignal ? (
+                <>
+                  <tr key={m.symbol} className="hover:bg-gray-800/30 transition-colors">
+                    <td className="p-4 font-medium">
                       <div className="flex items-center gap-2">
-                        <Badge action={rowSignal.action} />
-                        <span className="text-xs text-gray-500">{rowSignal.confidence}%</span>
+                        <button
+                          onClick={() => toggleExpanded(m.symbol)}
+                          className="p-1 rounded hover:bg-gray-800 text-gray-400"
+                          title="Toggle analysis"
+                          disabled={!rowSignal}
+                        >
+                          {expanded[m.symbol] ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        </button>
+                        <span>{m.symbol} <span className="text-gray-500 font-normal">{m.name}</span></span>
                       </div>
-                    ) : m.signal ? (
-                      <Badge action={m.signal} />
-                    ) : (
-                      <span className="text-gray-500">—</span>
-                    )}
-                  </td>
-                  <td className="p-4 text-right">
-                    <button
-                      onClick={() => handleAnalyze(m.symbol)}
-                      disabled={analyzing === m.symbol}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
-                    >
-                      {analyzing === m.symbol ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                      Analyze
-                    </button>
-                  </td>
-                </tr>
+                    </td>
+                    <td className="p-4 text-gray-400 capitalize">{m.type}</td>
+                    <td className="p-4">${m.price.toLocaleString()}</td>
+                    <td className={`p-4 ${m.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{m.change24h >= 0 ? '+' : ''}{m.change24h}%</td>
+                    <td className="p-4 text-gray-400">${(m.volume24h / 1e6).toFixed(1)}M</td>
+                    <td className="p-4 text-gray-400">{m.funding !== undefined ? `${(m.funding * 100).toFixed(4)}%` : '-'}</td>
+                    <td className="p-4 text-gray-400">{m.openInterest !== undefined ? `$${(m.openInterest * (m.price || 0) / 1e6).toFixed(1)}M` : '-'}</td>
+                    <td className="p-4">
+                      {rowSignal ? (
+                        <div className="flex items-center gap-2">
+                          <Badge action={rowSignal.action} />
+                          <span className="text-xs text-gray-500">{rowSignal.confidence}%</span>
+                        </div>
+                      ) : m.signal ? (
+                        <Badge action={m.signal} />
+                      ) : (
+                        <span className="text-gray-500">—</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-right">
+                      <button
+                        onClick={() => handleAnalyze(m.symbol)}
+                        disabled={analyzing === m.symbol}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+                      >
+                        {analyzing === m.symbol ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                        Analyze
+                      </button>
+                    </td>
+                  </tr>
+
+                  {expanded[m.symbol] && rowSignal && (
+                    <tr key={`${m.symbol}-analysis`}>
+                      <td colSpan={9} className="p-0">
+                        <div className="bg-[#0d0f14] border-t border-gray-800 p-4">
+                          <h4 className="text-sm font-medium mb-2">Analysis: {m.symbol}</h4>
+                          <p className="text-sm text-gray-300 mb-3">{rowSignal.reasoning}</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                            <div><span className="text-gray-500">Confidence</span><div>{rowSignal.confidence}%</div></div>
+                            <div><span className="text-gray-500">Entry</span><div>${rowSignal.entry.toFixed(4)}</div></div>
+                            <div><span className="text-gray-500">Stop</span><div>${rowSignal.stop.toFixed(4)}</div></div>
+                            <div><span className="text-gray-500">Target</span><div>${rowSignal.target.toFixed(4)}</div></div>
+                          </div>
+                          <div>
+                            <h5 className="text-xs font-medium text-gray-400 uppercase mb-2">Suggested Strategies</h5>
+                            <div className="flex flex-wrap gap-2">
+                              {suggested.length === 0 && <span className="text-sm text-gray-500">No specific strategies for this market.</span>}
+                              {suggested.map((s) => (
+                                <span key={s.id} className="px-2 py-1 rounded text-xs bg-violet-500/10 text-violet-300 border border-violet-500/20">{s.name}</span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
               );
             })}
           </tbody>
