@@ -236,3 +236,195 @@ Acceptance criteria use:
 
 **Acceptance Criteria**
 - Given I attempt to activate a live strategy for the first time, when the modal opens, then I must acknowledge "This is not financial advice and I may lose capital" before proceeding.
+
+---
+
+## Epic 9: Packaging, Deployment & Developer Experience
+
+### US-9.1 Add app-level Python packaging
+**As a** developer, **I want** `app/` to have its own `pyproject.toml` or `requirements.txt`, **so that** the FastAPI backend dependencies are explicit and installable.
+
+**Acceptance Criteria**
+- Given I clone the repo, when I run `pip install -e app/`, then `fastapi`, `uvicorn`, `pydantic`, `hyperliquid-python-api`, `cryptography`, `numpy`, `pandas`, and `tradingagents` are installed.
+- Given `app/pyproject.toml` exists, when I read it, then it pins compatible versions of all non-engine dependencies.
+
+### US-9.2 Fix Docker build
+**As a** operator, **I want** `docker compose -f app/docker-compose.web.yml up --build` to work, **so that** I can deploy the app without manual setup.
+
+**Acceptance Criteria**
+- Given a clean environment, when I run the compose command, then the image builds and the backend starts on port 8000.
+- Given the container is running, when I open `http://localhost:8000`, then I see the React app served from `frontend/dist`.
+
+### US-9.3 Update runbook
+**As a** developer, **I want** `docs/RUNBOOK.md` to match the current directory layout, **so that** new contributors can run the app correctly.
+
+**Acceptance Criteria**
+- Given I follow the runbook, when I run the backend, then the command is `cd app && python -m backend.main`.
+- Given I follow the runbook, when I run the frontend, then the command is `cd app/frontend && npm run dev`.
+- Given I follow the runbook, when I run lint, then the command is `ruff check app/backend`.
+
+### US-9.4 Add CI for the app
+**As a** maintainer, **I want** GitHub Actions to test the app, **so that** regressions are caught before merging.
+
+**Acceptance Criteria**
+- Given a pull request, when CI runs, then `ruff check app/backend`, `pytest app/backend/tests`, and `npm run build` in `app/frontend` all pass.
+
+---
+
+## Epic 10: Backtest Correctness & Live/Backtest Consistency
+
+### US-10.1 Remove look-ahead bias
+**As a** quant, **I want** backtest indicators to be calculated only from past bars, **so that** results are realistic.
+
+**Acceptance Criteria**
+- Given a strategy uses `sma20`, when a signal is computed for bar `i`, then `sma20` does not include the close of bar `i`.
+- Given the backtest runs, when it enters a position, then the entry price is the next bar's open or the current bar's close (documented and consistent).
+
+### US-10.2 Unify live and backtest template logic
+**As a** trader, **I want** the same template rules used in backtest and live signal generation, **so that** a backtested strategy behaves the same in production.
+
+**Acceptance Criteria**
+- Given a `turtle_breakout` strategy, when I run a backtest and then generate live signals over the same period, then the long/short/flat signals match within tolerance.
+- Given a template does not have live logic yet, when the user tries to run it live, then the UI shows "Live not supported for this template yet".
+
+### US-10.3 Fix Sharpe calculation
+**As a** trader, **I want** the Sharpe ratio to be computed from stable returns, **so that** it is comparable across strategies.
+
+**Acceptance Criteria**
+- Given a backtest completes, when I view the Sharpe ratio, then it is based on percent returns on deployed capital or log returns, not equity-curve first differences.
+- Given a volatile but flat strategy, when the Sharpe is computed, then it stays within a realistic range (e.g., -5 to +5) rather than -18.
+
+### US-10.4 Add template regression tests
+**As a** developer, **I want** each strategy template tested on synthetic OHLCV data, **so that** template changes do not silently break signals.
+
+**Acceptance Criteria**
+- Given a synthetic 200-bar dataset, when each template runs, then it produces a mix of long, short, and flat signals without exceptions.
+- Given a template is modified, when tests run, then the signal distribution is compared to a recorded baseline and flagged if it changes significantly.
+
+---
+
+## Epic 11: Real-Time Portfolio & PnL
+
+### US-11.1 Refresh mark price for open positions
+**As a** trader, **I want** open positions to update with the current Hyperliquid mark price, **so that** I see live unrealized PnL.
+
+**Acceptance Criteria**
+- Given an open LONG position, when the mark price changes, then the position's `markPrice` and `pnl` are updated within 10 seconds.
+- Given a SHORT position, when the mark price rises, then `pnl` becomes more negative.
+
+### US-11.2 Show live unrealized PnL
+**As a** trader, **I want** the Dashboard and Positions page to show live PnL, **so that** I can monitor my portfolio.
+
+**Acceptance Criteria**
+- Given I am on `/positions`, when the page loads, then each row shows `markPrice` and live `pnl`.
+- Given I am on `/`, when the dashboard loads, then the `Unrealized PnL` card reflects live mark prices.
+
+### US-11.3 Replace mock equity chart with real data
+**As a** trader, **I want** the Dashboard equity curve to be real, **so that** I trust the portfolio overview.
+
+**Acceptance Criteria**
+- Given I have executed trades, when I open the Dashboard, then the equity curve is built from stored portfolio snapshots, not `equityData` from `mockData.ts`.
+- Given the backend has no trades, when the dashboard loads, then the chart shows a flat line at the starting balance instead of mock sample data.
+
+### US-11.4 Store portfolio equity history
+**As a** the system, **I want** to record periodic portfolio value snapshots, **so that** the equity curve is accurate over time.
+
+**Acceptance Criteria**
+- Given the backend is running, when a background job runs every minute, then it records `wallet_id`, `timestamp`, and `total_value`.
+- Given I open the Dashboard, when it fetches history, then it shows at most one point per minute.
+
+---
+
+## Epic 12: Security & Risk Hardening
+
+### US-12.1 Use unique per-wallet encryption salt
+**As a** trader, **I want** each wallet secret encrypted with a unique salt, **so that** a compromised password does not decrypt all wallets.
+
+**Acceptance Criteria**
+- Given I create two wallets with the same master password, when their encrypted keys are compared, then they are not identical.
+- Given a wallet is created, when the salt is stored, then it is different for every wallet.
+
+### US-12.2 Add live trading confirmation
+**As a** trader, **I want** an explicit confirmation before any live order, **so that** I do not accidentally trade real capital.
+
+**Acceptance Criteria**
+- Given I attempt to execute a live signal, when the order is about to be sent, then a modal shows symbol, side, size, leverage, and wallet.
+- Given the modal is open, when I click "Confirm", then the order is submitted; when I click "Cancel", then it is not.
+
+### US-12.3 Validate provider/model in strategy editor
+**As a** system, **I want** `llmProvider` and `llmModel` validated against the upstream catalog, **so that** strategies do not reference unavailable models.
+
+**Acceptance Criteria**
+- Given a user selects `glm` / `glm-5-turbo` (which is in `model_catalog`), when they save, then the strategy is accepted.
+- Given a user selects `openai` / `invalid-model`, when they save, then the frontend shows a validation error.
+
+### US-12.4 Sanitize API error responses
+**As a** trader, **I want** the backend to return generic error messages, **so that** internal details are not exposed.
+
+**Acceptance Criteria**
+- Given an unexpected exception occurs, when the frontend receives the response, then the detail is a short, user-friendly message, not a full stack trace.
+- Given an exception occurs, when the backend logs it, then the full stack trace is written to the server logs.
+
+---
+
+## Epic 13: Frontend Polish & Real Data
+
+### US-13.1 Remove mock data fallbacks
+**As a** trader, **I want** the app to show real data or clear empty states, **so that** I am not misled by sample charts.
+
+**Acceptance Criteria**
+- Given the backend is unavailable, when `fetchAccount` fails, then the Dashboard shows an error message instead of `mockAccount`.
+- Given there are no trades, when the Dashboard loads, then the equity chart is a flat line, not `equityData`.
+
+### US-13.2 Add loading and error states
+**As a** trader, **I want** clear loading and error feedback, **so that** I know when data is missing.
+
+**Acceptance Criteria**
+- Given a page is fetching data, when it takes >500ms, then a loading skeleton or spinner is shown.
+- Given a fetch fails, when the page renders, then an error banner with a retry button is shown.
+
+### US-13.3 Fix fast-refresh warning
+**As a** developer, **I want** `WalletContext` to satisfy fast-refresh rules, **so that** the lint warning is gone.
+
+**Acceptance Criteria**
+- Given I run `npm run lint`, when the output is generated, then there are no `only-export-components` warnings.
+- Given `WalletContext` is refactored, when the app runs, then provider and hook still work correctly.
+
+### US-13.4 Improve strategy editor validation/labels
+**As a** trader, **I want** the strategy editor to clearly label percentage and absolute fields, **so that** I do not misconfigure thresholds.
+
+**Acceptance Criteria**
+- Given I am editing `riskConfig`, when I see the funding threshold fields, then the label indicates the value is a percentage (e.g., "Long Funding Threshold (%)").
+- Given I enter `5` in the allocation field, when saved, then the backend receives `0.05`, not `5`.
+
+---
+
+## Epic 14: Testing & Observability
+
+### US-14.1 Add backend endpoint smoke tests
+**As a** developer, **I want** all FastAPI endpoints covered by smoke tests, **so that** broken routes are caught in CI.
+
+**Acceptance Criteria**
+- Given `TestClient` is set up, when it calls `/api/health`, `/api/markets`, `/api/backtest`, `/api/signals`, and `/api/strategies`, then each returns a 2xx or documented 4xx status.
+- Given a test run completes, when I view coverage, then all main routes have at least one test.
+
+### US-14.2 Add backtest unit tests
+**As a** developer, **I want** the backtest engine tested with synthetic data, **so that** logic changes do not break existing templates.
+
+**Acceptance Criteria**
+- Given a 200-bar synthetic OHLCV dataset, when `run_backtest` is called for each template, then it completes without exception.
+- Given a known deterministic dataset, when the backtest runs, then the total return and trade count match a recorded snapshot.
+
+### US-14.3 Add frontend component tests
+**As a** developer, **I want** key React components tested, **so that** UI regressions are caught.
+
+**Acceptance Criteria**
+- Given `Backtest` renders with sample `BacktestResult` props, when the page loads, then statistics and charts are displayed.
+- Given `StrategyEditor` opens with a template query parameter, when it loads, then the form is pre-filled with the template defaults.
+
+### US-14.4 Add structured logging and health checks
+**As a** operator, **I want** the app to log structured events and expose health checks, **so that** I can monitor it in production.
+
+**Acceptance Criteria**
+- Given a backtest runs, when it completes, then a structured log line is emitted with `duration_ms`, `symbol`, `interval`, and `total_return_pct`.
+- Given I call `/api/health`, when the backend is healthy, then it returns `status: ok` plus `db: ok` and `hyperliquid: ok`.

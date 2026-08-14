@@ -68,6 +68,7 @@ const TRADE_HINTS: Record<string, string> = {
   Size: 'Position size in coins.',
   'Net PnL': 'Net profit or loss after fees and funding.',
   Return: 'Gross return percent on the trade.',
+  Confidence: 'Signal confidence score at entry (0-100).',
 };
 
 function formatSide(signal: number) {
@@ -154,12 +155,14 @@ export function Backtest() {
     const data = result.price.map((p) => ({ ...p, buy: null as number | null, sell: null as number | null }));
     const map = new Map(data.map((d, i) => [d.time, i]));
     for (const t of result.trades) {
-      const idx = map.get(t.entryTime);
-      if (idx == null) continue;
+      const entryIdx = map.get(t.entryTime);
+      const exitIdx = map.get(t.exitTime);
       if (t.side === 'LONG') {
-        data[idx].buy = t.entryPrice;
+        if (entryIdx != null) data[entryIdx].buy = t.entryPrice;
+        if (exitIdx != null) data[exitIdx].sell = t.exitPrice;
       } else {
-        data[idx].sell = t.entryPrice;
+        if (entryIdx != null) data[entryIdx].sell = t.entryPrice;
+        if (exitIdx != null) data[exitIdx].buy = t.exitPrice;
       }
     }
     return data;
@@ -473,14 +476,14 @@ export function Backtest() {
                     stroke="transparent"
                     dot={{ r: 5, fill: '#10b981' }}
                     isAnimationActive={false}
-                    name="Buy (Long)"
+                    name="Buy"
                   />
                   <Line
                     dataKey="sell"
                     stroke="transparent"
                     dot={{ r: 5, fill: '#ef4444' }}
                     isAnimationActive={false}
-                    name="Sell (Short)"
+                    name="Sell"
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -500,6 +503,7 @@ export function Backtest() {
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Size}>Size</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS['Net PnL']}>Net PnL</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Return}>Return</th>
+                    <th className="text-right py-2 px-2" title={TRADE_HINTS.Confidence}>Confidence</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -525,6 +529,7 @@ export function Backtest() {
                       <td className={`py-2 px-2 text-right ${t.returnPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {formatPct(t.returnPct)}
                       </td>
+                      <td className="py-2 px-2 text-right text-gray-300">{t.confidence}</td>
                     </tr>
                   ))}
                 </tbody>

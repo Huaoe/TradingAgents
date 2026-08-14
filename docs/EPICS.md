@@ -160,3 +160,114 @@ Notify the user, let the agents learn, and finish the UX.
 - Alerts fire for new signals, fills, stop hits, and risk breaches.
 - Reflection loop runs after every closed trade.
 - App is usable on a 13" laptop and a phone.
+
+---
+
+# Phase 2 — Post-MVP Hardening & Production Readiness
+
+The following epics are derived from the code review of the current app. They focus on packaging, correctness, live/backtest consistency, real-time PnL, security, frontend polish, and testing.
+
+## Progress
+
+| Epic | Status |
+|---|---|
+| Epic 9 — Packaging, Deployment & Developer Experience | To Do |
+| Epic 10 — Backtest Correctness & Live/Backtest Consistency | To Do |
+| Epic 11 — Real-Time Portfolio & PnL | To Do |
+| Epic 12 — Security & Risk Hardening | To Do |
+| Epic 13 — Frontend Polish & Real Data | To Do |
+| Epic 14 — Testing & Observability | To Do |
+
+## Epic 9: Packaging, Deployment & Developer Experience
+
+Make the app installable, runnable, and deployable by others.
+
+**Scope**
+- Create `app/pyproject.toml` (or `app/requirements.txt`) listing the app-only dependencies: `fastapi`, `uvicorn`, `pydantic`, `hyperliquid-python-api`, `cryptography`, `numpy`, `pandas`, and the `tradingagents` engine package.
+- Fix `app/Dockerfile.web` and `app/docker-compose.web.yml` build context, copy paths, and final command.
+- Update `docs/RUNBOOK.md` to the current directory layout and dependency install steps.
+- Add `ruff`, `pytest`, and `httpx` dev dependencies and a GitHub Actions job for the app.
+
+**Definition of Done**
+- `docker compose -f app/docker-compose.web.yml up --build` works from a clean clone.
+- `cd app && python -m backend.main` and `cd app/frontend && npm run dev` start the app following the runbook.
+- CI runs `ruff check app/backend`, `pytest app/backend/tests`, and `npm run build` in `app/frontend`.
+
+## Epic 10: Backtest Correctness & Live/Backtest Consistency
+
+Ensure backtests are realistic and live signals match the logic that was backtested.
+
+**Scope**
+- Remove look-ahead bias: shift all bar-derived indicators by one bar in `_prepare_candles` or execute entries/exits at the next bar's open.
+- Unify template-specific rules between `app/backend/services/backtest.py` and `app/backend/services/signal_engine.py`, or disable live execution for templates whose live logic is not implemented.
+- Replace the equity-curve Sharpe calculation with returns on deployed capital or log returns, and clamp extreme values.
+- Add synthetic-data regression tests for every strategy template.
+
+**Definition of Done**
+- A deterministic backtest produces the same result across runs.
+- Running the same strategy in backtest and live over an identical recent period yields the same directional signals within tolerance.
+- Sharpe and drawdown numbers are in a realistic, stable range.
+
+## Epic 11: Real-Time Portfolio & PnL
+
+Make the dashboard and positions reflect live market prices.
+
+**Scope**
+- Add a background job that refreshes `markPrice` and `pnl` for open positions using `HyperliquidClient.get_market`.
+- Update `app/backend/services/portfolio_engine.py` to use live mark prices for `unrealizedPnl` and `totalValue`.
+- Store and plot real portfolio equity history for the Dashboard.
+- Show per-position unrealized PnL and distance to liquidation.
+
+**Definition of Done**
+- Dashboard PnL updates every 5–10 seconds without a page reload.
+- Positions page shows current mark price and live unrealized PnL.
+- The Dashboard equity curve is real, not mock data.
+
+## Epic 12: Security & Risk Hardening
+
+Protect secrets and prevent accidental real trading.
+
+**Scope**
+- Generate a unique salt per wallet (stored alongside `encrypted_key`) or use the OS keyring for private-key encryption.
+- Remove the "show encrypted key" eye icon from the Wallets page.
+- Add an explicit two-step live-trading confirmation modal before any live order.
+- Validate `llmProvider`/`llmModel` against `tradingagents.llm_clients.model_catalog` when saving a strategy.
+- Replace broad `except Exception` handlers in `app/backend/main.py` with targeted error handling and generic frontend messages.
+- Add input validation for `symbol`, `limit`, date ranges, and order sizes.
+
+**Definition of Done**
+- Wallet secrets are encrypted with a per-wallet salt or keyring-backed storage.
+- Live order submission requires a clear confirmation in the UI.
+- No stack traces or raw exceptions are returned to the frontend.
+
+## Epic 13: Frontend Polish & Real Data
+
+Replace mock data and improve the user experience.
+
+**Scope**
+- Remove `app/frontend/src/data/mockData.ts` and all `mockAccount` / `equityData` fallbacks from `api.ts` and `Dashboard.tsx`.
+- Add loading skeletons, error boundaries, and retry logic for all pages.
+- Fix the `WalletContext` fast-refresh warning by splitting the provider and hook into separate files.
+- Add percent/value labels and validation to `StrategyEditor` funding, allocation, and threshold fields.
+- Improve mobile responsiveness for tables and the sidebar.
+
+**Definition of Done**
+- Dashboard and all pages display real data or explicit empty/error states.
+- `npm run lint` and `npm run build` produce no warnings.
+- The app is usable without horizontal scrolling on a 375px-wide device.
+
+## Epic 14: Testing & Observability
+
+Add confidence through tests, logs, and monitoring.
+
+**Scope**
+- Add FastAPI endpoint smoke tests using `TestClient`.
+- Add unit tests for `backtest.py`, `signal_engine.py`, `execution_engine.py`, and `portfolio_engine.py` with synthetic market data.
+- Add frontend component tests for `Backtest`, `StrategyEditor`, and `Signals`.
+- Add structured logging and expose dependency health in `/api/health`.
+- Track metrics: LLM spend per signal, signal generation latency, paper/live execution success rate.
+
+**Definition of Done**
+- App backend has >70% line coverage on service modules.
+- CI passes on pull requests.
+- `/api/health` reports database and Hyperliquid Info API connectivity.

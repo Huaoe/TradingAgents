@@ -98,6 +98,9 @@ def _prepare_candles(candles: list[dict[str, Any]]) -> pd.DataFrame:
     df["emaHigh"] = df["high"].ewm(span=34, adjust=False).mean()
     df["emaLow"] = df["low"].ewm(span=34, adjust=False).mean()
     df["emaSlow"] = df["close"].ewm(span=200, adjust=False).mean()
+    # Time-series momentum (trailing N-bar return, sign determines direction).
+    tsmom_lookback = 60
+    df["tsmomRet"] = (df["close"] / df["close"].shift(tsmom_lookback) - 1).shift(1)
     return df
 
 
@@ -128,11 +131,12 @@ def _signal_for_bar(
     df: pd.DataFrame,
     idx: int,
     strategy: dict[str, Any],
-) -> int:
-    """Return -1, 0, or 1 for the bar at ``idx``."""
+) -> tuple[int, int]:
+    """Return (signal, confidence) for the bar at ``idx``."""
     row = df.iloc[idx]
+    score = 0
     if idx == 0 or pd.isna(row["sma50"]):
-        return 0
+        return 0, int(score)
 
     close = row["close"]
     prev_close = df["close"].iloc[idx - 1]
@@ -182,7 +186,7 @@ def _signal_for_bar(
         elif trend_down:
             score = 30
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "mean-reversion":
         if rsi_score() > 0 and bound_score() > 0:
@@ -190,7 +194,7 @@ def _signal_for_bar(
         elif rsi_score() < 0 and bound_score() < 0:
             score = 20
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template in ("funding-rate-arb", "hype-delta-neutral", "basis-arbitrage"):
         if funding < long_thr:
@@ -198,14 +202,14 @@ def _signal_for_bar(
         elif funding > short_thr:
             score = 20
         else:
-            return 0
+            return 0, int(score)
     elif template == "trend-following":
         if trend_up:
             score = 70
         elif trend_down:
             score = 30
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "scalp-momentum":
         if pd.notna(upper) and close > upper and trend_up:
@@ -213,7 +217,7 @@ def _signal_for_bar(
         elif pd.notna(lower) and close < lower and trend_down:
             score = 20
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "news-event":
         bar_range = row["high"] - row["low"]
@@ -225,15 +229,15 @@ def _signal_for_bar(
             elif close < open_price and close < prev_close:
                 score = 20
             else:
-                return 0
+                return 0, int(score)
             score += funding_score()
         else:
-            return 0
+            return 0, int(score)
     elif template == "grid-trading":
         donchian_high = row.get("donchianHigh")
         donchian_low = row.get("donchianLow")
         if pd.isna(donchian_high) or pd.isna(donchian_low) or donchian_high == donchian_low:
-            return 0
+            return 0, int(score)
         range_span = donchian_high - donchian_low
         position_in_range = (close - donchian_low) / range_span
         if position_in_range <= 0.2:
@@ -241,12 +245,12 @@ def _signal_for_bar(
         elif position_in_range >= 0.8:
             score = 30
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "dual-thrust":
         hh, hc, lc, ll = row.get("dtHH"), row.get("dtHC"), row.get("dtLC"), row.get("dtLL")
         if pd.isna(hh) or pd.isna(hc) or pd.isna(lc) or pd.isna(ll):
-            return 0
+            return 0, int(score)
         thrust_range = max(hh - lc, hc - ll)
         k1 = k2 = 0.5
         open_price = row["open"]
@@ -257,26 +261,26 @@ def _signal_for_bar(
         elif close < lower_band:
             score = 25
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "turtle-breakout":
         donchian_high = row.get("donchianHigh")
         donchian_low = row.get("donchianLow")
         if pd.isna(donchian_high) or pd.isna(donchian_low):
-            return 0
+            return 0, int(score)
         if close > donchian_high:
             score = 75
         elif close < donchian_low:
             score = 25
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "ema-bands-trend-catch":
         ema_high = row.get("emaHigh")
         ema_low = row.get("emaLow")
         ema_slow = row.get("emaSlow")
         if pd.isna(ema_high) or pd.isna(ema_low) or pd.isna(ema_slow):
-            return 0
+            return 0, int(score)
         if close > ema_high and close > ema_slow:
             score = 75
         elif close < ema_low and close < ema_slow:
@@ -289,21 +293,39 @@ def _signal_for_bar(
             elif pd.notna(prev_lower) and prev_close < prev_lower and close > lower and rsi < 30:
                 score = 75
             else:
-                return 0
+                return 0, int(score)
         else:
-            return 0
+            return 0, int(score)
         score += funding_score()
     elif template == "atr-rsi-combo":
         atr = row["atr14"]
         atr_sma = row.get("atrSma20")
         if pd.isna(atr) or pd.isna(atr_sma) or atr <= atr_sma:
-            return 0
+            return 0, int(score)
         if rsi < 30:
             score = 80
         elif rsi > 70:
             score = 20
         else:
-            return 0
+            return 0, int(score)
+        score += funding_score()
+    elif template == "time-series-momentum":
+        tsmom_ret = row.get("tsmomRet")
+        if pd.isna(tsmom_ret):
+            return 0, int(score)
+        if tsmom_ret > 0:
+            score = 70
+        elif tsmom_ret < 0:
+            score = 30
+        else:
+            return 0, int(score)
+        score += funding_score()
+    elif template == "overnight-seasonality-btc":
+        hour = df.index[idx].hour
+        if hour == 22 or hour == 23:
+            score = 80
+        else:
+            return 0, int(score)
         score += funding_score()
     else:  # custom / fallback
         if trend_up:
@@ -313,10 +335,10 @@ def _signal_for_bar(
         score += rsi_score() + bound_score() + funding_score()
 
     if score >= confidence_floor:
-        return 1
+        return 1, int(score)
     if score <= (100 - confidence_floor):
-        return -1
-    return 0
+        return -1, int(score)
+    return 0, int(score)
 
 
 def _yfinance_candles(
@@ -377,11 +399,14 @@ def _load_strategy(strategy: dict[str, Any] | None) -> dict[str, Any]:
     return strategy or {}
 
 
-def _compute_signals(df: pd.DataFrame, strategy: dict[str, Any]) -> pd.Series:
+def _compute_signals(df: pd.DataFrame, strategy: dict[str, Any]) -> pd.DataFrame:
     signals = pd.Series(index=df.index, dtype=int)
+    confidences = pd.Series(index=df.index, dtype=int)
     for i in range(len(df)):
-        signals.iloc[i] = _signal_for_bar(df, i, strategy)
-    return signals
+        sig, conf = _signal_for_bar(df, i, strategy)
+        signals.iloc[i] = sig
+        confidences.iloc[i] = conf
+    return pd.DataFrame({"signal": signals, "confidence": confidences})
 
 
 def run_backtest(
@@ -428,8 +453,9 @@ def run_backtest(
     max_leverage = int(market.get("maxLeverage") or 3)
     leverage = min(leverage, max_leverage)
 
-    signals = _compute_signals(df, strategy)
-    df["signal"] = signals
+    out = _compute_signals(df, strategy)
+    df["signal"] = out["signal"]
+    df["confidence"] = out["confidence"]
 
     confidence_floor_value = int(_safe_float(cfg.get("confidenceFloor"), 60))
     final_signal = int(df["signal"].iloc[-1]) if not df.empty else 0
@@ -447,6 +473,7 @@ def run_backtest(
     position: int = 0  # -1, 0, 1
     entry_price = 0.0
     entry_time = None
+    entry_confidence = 0
     entry_notional = 0.0
     position_size_coin = 0.0
     cumulative_funding = 0.0
@@ -469,18 +496,20 @@ def run_backtest(
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
         price_curve.append({"time": current_time.isoformat(), "close": round(float(current_price), 8)})
 
-    def open_position(new_position: int, price: float, time: pd.Timestamp) -> None:
+    def open_position(new_position: int, price: float, time: pd.Timestamp, confidence: int) -> None:
         nonlocal \
             cash, \
             position, \
             entry_price, \
             entry_time, \
+            entry_confidence, \
             entry_notional, \
             position_size_coin, \
             cumulative_funding
         position = new_position
         entry_price = float(price)
         entry_time = time
+        entry_confidence = int(confidence)
         entry_notional = float(cash * allocation * leverage)
         # Cap notional by available leverage headroom
         max_notional = cash * leverage
@@ -497,6 +526,7 @@ def run_backtest(
             position, \
             entry_price, \
             entry_time, \
+            entry_confidence, \
             entry_notional, \
             position_size_coin, \
             cumulative_funding
@@ -528,11 +558,13 @@ def run_backtest(
                 "fundingCost": round(float(cumulative_funding), 2),
                 "netPnl": round(net_pnl, 2),
                 "returnPct": round(return_pct, 2),
+                "confidence": int(entry_confidence),
             }
         )
         position = 0
         entry_price = 0.0
         entry_time = None
+        entry_confidence = 0
         entry_notional = 0.0
         position_size_coin = 0.0
         cumulative_funding = 0.0
@@ -553,7 +585,7 @@ def run_backtest(
             if position != 0:
                 close_position(price, time)
             if signal != 0:
-                open_position(signal, price, time)
+                open_position(signal, price, time, int(row["confidence"]))
 
         mark_equity(price, time)
 

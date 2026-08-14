@@ -16,6 +16,7 @@ from typing import Any
 import pandas as pd
 
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.llm_cost import estimate_cost
 from backend.services.llm_tracker import LlmUsageTracker
 from backend.services.llm_usage_store import LlmUsageStore
 
@@ -217,6 +218,8 @@ def _llm_available() -> bool:
             "ANTHROPIC_API_KEY",
             "GOOGLE_API_KEY",
             "AZURE_OPENAI_API_KEY",
+            "ZHIPU_API_KEY",
+            "ZHIPU_CN_API_KEY",
         )
     )
 
@@ -290,6 +293,7 @@ def _generate_signal_llm(
         "tokensIn": tracker.tokens_in,
         "tokensOut": tracker.tokens_out,
         "llmCalls": tracker.llm_calls,
+        "spend": round(estimate_cost(tracker.tokens_in, tracker.tokens_out), 4),
     }
     LlmUsageStore().record(tracker.tokens_in, tracker.tokens_out, tracker.llm_calls)
     return signal

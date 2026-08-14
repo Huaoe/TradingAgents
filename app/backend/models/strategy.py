@@ -25,8 +25,8 @@ class StrategyBase(BaseModel):
     template: str = "custom"
     markets: list[str] = Field(default_factory=list)
     agents: list[str] = Field(default_factory=lambda: ["Market", "Funding", "OrderBook"])
-    llmProvider: str = "openai"
-    llmModel: str = "gpt-5.4-mini"
+    llmProvider: str = "glm"
+    llmModel: str = "glm-5-turbo"
     llmMode: Literal["quick", "deep"] = "quick"
     executionMode: Literal["manual", "auto-confirm", "auto"] = "manual"
     schedule: str = ""

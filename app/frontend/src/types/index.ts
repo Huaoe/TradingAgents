@@ -29,6 +29,7 @@ export interface Signal {
   agents: string[];
   timestamp: string;
   status: 'pending' | 'accepted' | 'rejected';
+  meta?: Record<string, any>;
 }
 
 export type PositionSide = 'LONG' | 'SHORT';
@@ -176,6 +177,7 @@ export interface BacktestTrade {
   fundingCost: number;
   netPnl: number;
   returnPct: number;
+  confidence: number;
 }
 
 export interface BacktestResult {

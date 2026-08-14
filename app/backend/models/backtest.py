@@ -40,6 +40,7 @@ class TradeRecord(BaseModel):
     fundingCost: float
     netPnl: float
     returnPct: float
+    confidence: int
 
 
 class BacktestSummary(BaseModel):
@@ -77,6 +78,7 @@ class BacktestResult(BaseModel):
     summary: BacktestSummary
     equity: list[dict[str, Any]]
     drawdown: list[dict[str, Any]]
+    price: list[dict[str, Any]]
     trades: list[TradeRecord]
     monthlyReturns: dict[str, float] | None = None
 

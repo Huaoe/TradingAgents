@@ -18,6 +18,8 @@ const TEMPLATE_CARDS: { template: string; title: string; description: string }[]
   { template: 'turtle_breakout', title: 'Turtle Breakout', description: 'Donchian-channel breakout in the spirit of the Turtle Trading system.' },
   { template: 'ema_bands_trend_catch', title: 'EMA Bands Trend Catch', description: 'EMA high/low band breakouts with Bollinger/RSI exhaustion counter-trend signals.' },
   { template: 'atr_rsi_combo', title: 'ATR-RSI Combo', description: 'Volatility expansion plus RSI extremes: ATR above its 20 SMA and RSI < 30 or > 70.' },
+  { template: 'time_series_momentum', title: 'Time Series Momentum', description: 'Long/short based on the sign of the trailing N-bar return (Moskowitz/Ooi/Pedersen effect).' },
+  { template: 'overnight_seasonality_btc', title: 'Overnight Seasonality (BTC)', description: 'Long-only intraday seasonality window: 22:00-23:59 UTC.' },
   { template: 'custom', title: 'Custom', description: 'Build your own strategy from scratch.' },
 ];
 

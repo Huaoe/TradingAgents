@@ -12,8 +12,8 @@ const DEFAULT_STRATEGY: StrategyInput = {
   template: 'custom',
   markets: [],
   agents: ['Market', 'Funding', 'OrderBook'],
-  llmProvider: 'openai',
-  llmModel: 'gpt-5.4-mini',
+  llmProvider: 'glm',
+  llmModel: 'glm-5-turbo',
   llmMode: 'quick',
   executionMode: 'manual',
   schedule: '',
@@ -40,6 +40,8 @@ const TEMPLATE_DEFAULTS: Record<string, Partial<StrategyInput>> = {
   turtle_breakout: { agents: ['Market', 'Funding'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
   ema_bands_trend_catch: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
   atr_rsi_combo: { agents: ['Market', 'Sentiment'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
+  time_series_momentum: { agents: ['Market', 'Funding'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
+  overnight_seasonality_btc: { agents: ['Market'], riskConfig: { leverage: 2, allocation: 10, confidenceFloor: 65 } },
   custom: { agents: ['Market', 'Funding', 'OrderBook'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
 };
 

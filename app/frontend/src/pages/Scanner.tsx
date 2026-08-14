@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Play, Loader2, AlertCircle, Search, ChevronDown, ChevronUp } from 'lucide-react';
+import { Play, Loader2, AlertCircle, Search, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
-import { fetchMarkets, fetchStrategies, runAnalysis } from '../services/api';
-import type { Market, Signal, Strategy } from '../types';
+import { fetchMarkets, fetchStrategies, runAnalysis, fetchAccount } from '../services/api';
+import type { Market, Signal, Strategy, Account } from '../types';
 
 export function Scanner() {
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -16,18 +16,21 @@ export function Scanner() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const navigate = useNavigate();
+  const [useLlm, setUseLlm] = useState(false);
+  const [account, setAccount] = useState<Account | null>(null);
   const [backtestSelection, setBacktestSelection] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchMarkets().then(setMarkets);
     fetchStrategies().then(setStrategies).catch(console.error);
+    fetchAccount().then(setAccount).catch(() => setAccount(null));
   }, []);
 
   const handleAnalyze = async (symbol: string) => {
     setError(null);
     setAnalyzing(symbol);
     try {
-      const signal = await runAnalysis(symbol, selectedStrategyId || undefined);
+      const signal = await runAnalysis(symbol, selectedStrategyId || undefined, useLlm);
       setSignals((prev) => ({ ...prev, [symbol]: signal }));
       setLatestSignal(signal);
       setExpanded((prev) => ({ ...prev, [symbol]: true }));
@@ -86,6 +89,33 @@ export function Scanner() {
               </option>
             ))}
           </select>
+          <label className="flex items-center gap-2 text-sm text-gray-300">
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(e) => setUseLlm(e.target.checked)}
+              className="rounded border-gray-700 bg-gray-900 text-violet-600"
+            />
+            <span className="flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-400" /> Use LLM
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="p-4 rounded-xl border border-gray-800 bg-[#11141c]">
+          <div className="text-xs text-gray-500 uppercase mb-1">Total LLM Spend</div>
+          <div className="text-xl font-semibold">${(account?.llmSpend ?? 0).toFixed(4)}</div>
+        </div>
+        <div className="p-4 rounded-xl border border-gray-800 bg-[#11141c]">
+          <div className="text-xs text-gray-500 uppercase mb-1">Total Tokens</div>
+          <div className="text-xl font-semibold">{((account?.llmTokensIn ?? 0) + (account?.llmTokensOut ?? 0)).toLocaleString()}</div>
+          <div className="text-xs text-gray-500">{(account?.llmTokensIn ?? 0).toLocaleString()} in / {(account?.llmTokensOut ?? 0).toLocaleString()} out</div>
+        </div>
+        <div className="p-4 rounded-xl border border-gray-800 bg-[#11141c]">
+          <div className="text-xs text-gray-500 uppercase mb-1">LLM Calls</div>
+          <div className="text-xl font-semibold">{(account?.llmCalls ?? 0).toLocaleString()}</div>
         </div>
       </div>
 
@@ -109,6 +139,14 @@ export function Scanner() {
             <div><span className="text-gray-500">Stop</span><div>${latestSignal.stop.toFixed(4)}</div></div>
             <div><span className="text-gray-500">Target</span><div>${latestSignal.target.toFixed(4)}</div></div>
           </div>
+          {latestSignal.meta?.llmUsage && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-4 border-t border-gray-800 pt-4">
+              <div><span className="text-gray-500">Tokens In</span><div>{latestSignal.meta.llmUsage.tokensIn.toLocaleString()}</div></div>
+              <div><span className="text-gray-500">Tokens Out</span><div>{latestSignal.meta.llmUsage.tokensOut.toLocaleString()}</div></div>
+              <div><span className="text-gray-500">LLM Calls</span><div>{latestSignal.meta.llmUsage.llmCalls.toLocaleString()}</div></div>
+              <div><span className="text-gray-500">Est. Cost</span><div>${latestSignal.meta.llmUsage.spend.toFixed(4)}</div></div>
+            </div>
+          )}
         </Card>
       )}
 
@@ -189,6 +227,14 @@ export function Scanner() {
                             <div><span className="text-gray-500">Stop</span><div>${rowSignal.stop.toFixed(4)}</div></div>
                             <div><span className="text-gray-500">Target</span><div>${rowSignal.target.toFixed(4)}</div></div>
                           </div>
+                          {rowSignal.meta?.llmUsage && (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm border-t border-gray-800 pt-4">
+                              <div><span className="text-gray-500">Tokens In</span><div>{rowSignal.meta.llmUsage.tokensIn.toLocaleString()}</div></div>
+                              <div><span className="text-gray-500">Tokens Out</span><div>{rowSignal.meta.llmUsage.tokensOut.toLocaleString()}</div></div>
+                              <div><span className="text-gray-500">LLM Calls</span><div>{rowSignal.meta.llmUsage.llmCalls.toLocaleString()}</div></div>
+                              <div><span className="text-gray-500">Est. Cost</span><div>${rowSignal.meta.llmUsage.spend.toFixed(4)}</div></div>
+                            </div>
+                          )}
                           <div>
                             <h5 className="text-xs font-medium text-gray-400 uppercase mb-2">Suggested Strategies</h5>
                             {suggested.length === 0 ? (

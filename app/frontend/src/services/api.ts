@@ -70,10 +70,10 @@ export async function closePosition(input: ClosePositionInput): Promise<{ positi
   });
 }
 
-export async function runAnalysis(symbol: string, strategyId?: string, strategy?: Record<string, unknown>): Promise<Signal> {
+export async function runAnalysis(symbol: string, strategyId?: string, useLlm?: boolean): Promise<Signal> {
   return api<Signal>('/api/analyze', {
     method: 'POST',
-    body: JSON.stringify({ symbol, strategyId, strategy }),
+    body: JSON.stringify({ symbol, strategyId, useLlm }),
   });
 }
 
