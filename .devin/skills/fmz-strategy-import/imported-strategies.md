@@ -29,6 +29,7 @@ template roster is visible at a glance):
 | `dual_thrust` | Dual Thrust (iconic FMZ/quant-community range-breakout system) | Classic formula: `Range = max(HH-LC, HC-LL)` over a 4-bar lookback, `upper = open + k1*Range`, `lower = open - k2*Range`, `k1=k2=0.5`. Long above upper band, short below lower band. |
 | `turtle_breakout` | Turtle Trading system (Donchian channel breakout) | 20-bar Donchian channel breakout (long on new N-bar high, short on new N-bar low), ATR-based stop distance already available via existing `atr14` column for future extension. |
 | `ema_bands_trend_catch` | [EMA-bands-leledc-bollinger-bands-trend-catching-strategy](https://github.com/fmzquant/strategies/blob/master/EMA-bands-leledc-bollinger-bands-trend-catching-strategy.md) | EMA of highs/lows as a middle band with a 200-period close EMA filter, plus counter-trend Bollinger Band/RSI exhaustion signals (close back inside the bands from an overbought/oversold RSI extreme). Adapted to the project's long/short/flat per-bar signal model. |
+| `atr_rsi_combo` | [ATR-RSI组合策略](https://github.com/fmzquant/strategies/blob/master/ATR-RSI%E7%BB%84%E5%90%88%E7%AD%96%E7%95%A5.md) | Long when `atr14` exceeds its 20-period SMA (volatility expansion) and `rsi14` is below 30; short when ATR is expanding and `rsi14` is above 70. Maps the spot-mean-reversion signal into the project's long/short/flat score model. |
 
 ## Good next candidates (not yet ported)
 

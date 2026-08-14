@@ -83,6 +83,7 @@ def _prepare_candles(candles: list[dict[str, Any]]) -> pd.DataFrame:
     df["lowerBB"] = df["sma20"] - 2 * df["std20"]
     df["rsi14"] = _rsi(df["close"], 14)
     df["atr14"] = _atr(df, 14)
+    df["atrSma20"] = df["atr14"].rolling(20).mean()
     # Donchian channel (prior N bars, excluding the current bar) — used by the
     # Turtle Breakout and Grid Trading templates.
     df["donchianHigh"] = df["high"].rolling(20).max().shift(1)
@@ -289,6 +290,18 @@ def _signal_for_bar(
                 score = 75
             else:
                 return 0
+        else:
+            return 0
+        score += funding_score()
+    elif template == "atr-rsi-combo":
+        atr = row["atr14"]
+        atr_sma = row.get("atrSma20")
+        if pd.isna(atr) or pd.isna(atr_sma) or atr <= atr_sma:
+            return 0
+        if rsi < 30:
+            score = 80
+        elif rsi > 70:
+            score = 20
         else:
             return 0
         score += funding_score()
