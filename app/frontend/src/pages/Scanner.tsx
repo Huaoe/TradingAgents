@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Play, Loader2, AlertCircle, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
 import { fetchMarkets, fetchStrategies, runAnalysis } from '../services/api';
@@ -14,6 +15,8 @@ export function Scanner() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const navigate = useNavigate();
+  const [backtestSelection, setBacktestSelection] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetchMarkets().then(setMarkets);
@@ -129,7 +132,7 @@ export function Scanner() {
               const rowSignal = signals[m.symbol];
               const suggested = rowSignal ? getSuggestedStrategies(m.symbol) : [];
               return (
-                <>
+                <Fragment key={m.symbol}>
                   <tr key={m.symbol} className="hover:bg-gray-800/30 transition-colors">
                     <td className="p-4 font-medium">
                       <div className="flex items-center gap-2">
@@ -188,18 +191,39 @@ export function Scanner() {
                           </div>
                           <div>
                             <h5 className="text-xs font-medium text-gray-400 uppercase mb-2">Suggested Strategies</h5>
-                            <div className="flex flex-wrap gap-2">
-                              {suggested.length === 0 && <span className="text-sm text-gray-500">No specific strategies for this market.</span>}
-                              {suggested.map((s) => (
-                                <span key={s.id} className="px-2 py-1 rounded text-xs bg-violet-500/10 text-violet-300 border border-violet-500/20">{s.name}</span>
-                              ))}
-                            </div>
+                            {suggested.length === 0 ? (
+                              <span className="text-sm text-gray-500">No specific strategies for this market.</span>
+                            ) : (
+                              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+                                <select
+                                  value={backtestSelection[m.symbol] || ''}
+                                  onChange={(e) => setBacktestSelection((prev) => ({ ...prev, [m.symbol]: e.target.value }))}
+                                  className="px-2 py-1.5 rounded bg-gray-900 border border-gray-700 text-sm focus:border-violet-500 outline-none"
+                                >
+                                  <option value="">Select a strategy...</option>
+                                  {suggested.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => {
+                                    const strategyId = backtestSelection[m.symbol];
+                                    if (!strategyId) return;
+                                    navigate(`/backtest?symbol=${encodeURIComponent(m.symbol)}&strategy=${encodeURIComponent(strategyId)}`);
+                                  }}
+                                  disabled={!backtestSelection[m.symbol]}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+                                >
+                                  Backtest
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>
                     </tr>
                   )}
-                </>
+                </Fragment>
               );
             })}
           </tbody>

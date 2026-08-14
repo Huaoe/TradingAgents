@@ -11,6 +11,7 @@ import {
   Area,
 } from 'recharts';
 import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Card } from '../components/Card';
 import { fetchStrategies, runBacktest, updateStrategy } from '../services/api';
 import type { Strategy, BacktestResult, BacktestInterval } from '../types';
@@ -41,9 +42,10 @@ function formatNumber(value: number) {
 }
 
 export function Backtest() {
+  const [searchParams] = useSearchParams();
   const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [strategyId, setStrategyId] = useState('');
-  const [symbol, setSymbol] = useState('BTC');
+  const [strategyId, setStrategyId] = useState(searchParams.get('strategy') || '');
+  const [symbol, setSymbol] = useState(searchParams.get('symbol')?.toUpperCase() || 'BTC');
   const [interval, setInterval] = useState<BacktestInterval>('1h');
   const end = useMemo(() => new Date().toISOString(), []);
   const start = useMemo(() => {
@@ -66,10 +68,15 @@ export function Backtest() {
   useEffect(() => {
     fetchStrategies().then((list) => {
       setStrategies(list);
-      const saved = list.find((s) => !s.id.startsWith('template-'));
-      if (saved) setStrategyId(saved.id);
+      const param = searchParams.get('strategy');
+      if (param && list.some((s) => s.id === param)) {
+        setStrategyId(param);
+      } else if (!param) {
+        const saved = list.find((s) => !s.id.startsWith('template-'));
+        if (saved) setStrategyId(saved.id);
+      }
     }).catch(() => setStrategies([]));
-  }, []);
+  }, [searchParams]);
 
   async function handleRun(e: React.FormEvent) {
     e.preventDefault();

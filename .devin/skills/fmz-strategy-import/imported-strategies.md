@@ -34,9 +34,6 @@ template roster is visible at a glance):
 
 Fill in / update this list as you scan the fmzquant README. Examples worth
 investigating next time:
-- EMA-bands-leledc-bollinger-bands-trend-catching-strategy (trend + BB
-  exhaustion counter-trend entries) — see
-  `EMA-bands-leledc-bollinger-bands-trend-catching-strategy.md` in the repo.
 - ahr999 DCA index strategy (accumulation strategy based on a valuation
   index) — would need a new "DCA" execution style, bigger lift.
 - Martingale-style position-sizing strategies — risky, needs careful mapping
