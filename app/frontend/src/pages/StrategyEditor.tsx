@@ -38,6 +38,7 @@ const TEMPLATE_DEFAULTS: Record<string, Partial<StrategyInput>> = {
   grid_trading: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 2, allocation: 10, confidenceFloor: 60 } },
   dual_thrust: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
   turtle_breakout: { agents: ['Market', 'Funding'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
+  ema_bands_trend_catch: { agents: ['Market', 'OrderBook'], riskConfig: { leverage: 3, allocation: 12, confidenceFloor: 60 } },
   custom: { agents: ['Market', 'Funding', 'OrderBook'], riskConfig: { leverage: 3, allocation: 10, confidenceFloor: 60 } },
 };
 

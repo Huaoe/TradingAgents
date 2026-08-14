@@ -93,6 +93,10 @@ def _prepare_candles(candles: list[dict[str, Any]]) -> pd.DataFrame:
     df["dtHC"] = df["close"].rolling(dt_lookback).max().shift(1)
     df["dtLC"] = df["close"].rolling(dt_lookback).min().shift(1)
     df["dtLL"] = df["low"].rolling(dt_lookback).min().shift(1)
+    # EMA bands (trend-catcher template): EMA of highs/lows plus a slow close EMA filter.
+    df["emaHigh"] = df["high"].ewm(span=34, adjust=False).mean()
+    df["emaLow"] = df["low"].ewm(span=34, adjust=False).mean()
+    df["emaSlow"] = df["close"].ewm(span=200, adjust=False).mean()
     return df
 
 
@@ -263,6 +267,28 @@ def _signal_for_bar(
             score = 75
         elif close < donchian_low:
             score = 25
+        else:
+            return 0
+        score += funding_score()
+    elif template == "ema-bands-trend-catch":
+        ema_high = row.get("emaHigh")
+        ema_low = row.get("emaLow")
+        ema_slow = row.get("emaSlow")
+        if pd.isna(ema_high) or pd.isna(ema_low) or pd.isna(ema_slow):
+            return 0
+        if close > ema_high and close > ema_slow:
+            score = 75
+        elif close < ema_low and close < ema_slow:
+            score = 25
+        elif pd.notna(upper) and pd.notna(lower):
+            prev_upper = df["upperBB"].iloc[idx - 1]
+            prev_lower = df["lowerBB"].iloc[idx - 1]
+            if pd.notna(prev_upper) and prev_close > prev_upper and close < upper and rsi > 70:
+                score = 25
+            elif pd.notna(prev_lower) and prev_close < prev_lower and close > lower and rsi < 30:
+                score = 75
+            else:
+                return 0
         else:
             return 0
         score += funding_score()

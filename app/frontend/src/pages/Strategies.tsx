@@ -16,6 +16,7 @@ const TEMPLATE_CARDS: { template: string; title: string; description: string }[]
   { template: 'grid_trading', title: 'Grid Trading', description: 'Buy near range lows, sell/short near range highs in sideways markets.' },
   { template: 'dual_thrust', title: 'Dual Thrust', description: 'Classic range-breakout bands built from recent high/low/close spread.' },
   { template: 'turtle_breakout', title: 'Turtle Breakout', description: 'Donchian-channel breakout in the spirit of the Turtle Trading system.' },
+  { template: 'ema_bands_trend_catch', title: 'EMA Bands Trend Catch', description: 'EMA high/low band breakouts with Bollinger/RSI exhaustion counter-trend signals.' },
   { template: 'custom', title: 'Custom', description: 'Build your own strategy from scratch.' },
 ];
 
