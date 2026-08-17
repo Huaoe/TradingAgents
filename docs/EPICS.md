@@ -169,14 +169,16 @@ The following epics are derived from the code review of the current app. They fo
 
 ## Progress
 
+> Phase 2 was delivered in the stabilization/hardening commit on `main` (`abfb94b`). Most epics are complete; the few remaining gaps are called out below.
+
 | Epic | Status |
 |---|---|
-| Epic 9 — Packaging, Deployment & Developer Experience | To Do |
-| Epic 10 — Backtest Correctness & Live/Backtest Consistency | To Do |
-| Epic 11 — Real-Time Portfolio & PnL | To Do |
-| Epic 12 — Security & Risk Hardening | To Do |
-| Epic 13 — Frontend Polish & Real Data | To Do |
-| Epic 14 — Testing & Observability | To Do |
+| Epic 9 — Packaging, Deployment & Developer Experience | Done |
+| Epic 10 — Backtest Correctness & Live/Backtest Consistency | Done (Sharpe still uses equity-curve pct-change, clamped; can be refined to returns-on-capital) |
+| Epic 11 — Real-Time Portfolio & PnL | Done |
+| Epic 12 — Security & Risk Hardening | Done |
+| Epic 13 — Frontend Polish & Real Data | Done |
+| Epic 14 — Testing & Observability | Partial (backend smoke/unit tests + CI done; `/api/health` does not yet probe DB or Hyperliquid; frontend component tests not added) |
 
 ## Epic 9: Packaging, Deployment & Developer Experience
 

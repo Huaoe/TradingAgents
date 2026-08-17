@@ -28,6 +28,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 8 — Portfolio, Positions & Risk Dashboard | Epic 7 | Done |
 | Sprint 9 — Alerts, Reflection & UI Polish | Epic 8 | Done (merged in PR #10) |
 | Sprint 10 — Stabilization & Launch Prep | — | Done (merged in PR #11) |
+| Sprint 11 — Phase 2 Hardening | Epics 9–14 | Done (merged in PR #12; Epic 14 partial — `/api/health` does not yet probe DB/Hyperliquid and frontend component tests are not added) |
 
 ---
 
@@ -305,6 +306,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | 8 | Epic 7 — Portfolio & risk dashboard |
 | 9 | Epic 8 — Alerts, reflection, UI polish |
 | 10 | Stabilization & release |
+| 11 | Epics 9–14 — Packaging, correctness, live PnL, security, frontend polish, testing |
 
 ---
 
