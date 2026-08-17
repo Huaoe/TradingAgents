@@ -239,7 +239,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 9: Packaging, Deployment & Developer Experience
+## Epic 9: Packaging, Deployment & Developer Experience *(Done)*
 
 ### US-9.1 Add app-level Python packaging
 **As a** developer, **I want** `app/` to have its own `pyproject.toml` or `requirements.txt`, **so that** the FastAPI backend dependencies are explicit and installable.
@@ -271,7 +271,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 10: Backtest Correctness & Live/Backtest Consistency
+## Epic 10: Backtest Correctness & Live/Backtest Consistency *(Done; US-10.3 Sharpe still uses equity-curve pct-change and can be refined to returns-on-capital)*
 
 ### US-10.1 Remove look-ahead bias
 **As a** quant, **I want** backtest indicators to be calculated only from past bars, **so that** results are realistic.
@@ -303,7 +303,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 11: Real-Time Portfolio & PnL
+## Epic 11: Real-Time Portfolio & PnL *(Done)*
 
 ### US-11.1 Refresh mark price for open positions
 **As a** trader, **I want** open positions to update with the current Hyperliquid mark price, **so that** I see live unrealized PnL.
@@ -335,7 +335,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 12: Security & Risk Hardening
+## Epic 12: Security & Risk Hardening *(Done)*
 
 ### US-12.1 Use unique per-wallet encryption salt
 **As a** trader, **I want** each wallet secret encrypted with a unique salt, **so that** a compromised password does not decrypt all wallets.
@@ -367,7 +367,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 13: Frontend Polish & Real Data
+## Epic 13: Frontend Polish & Real Data *(Done)*
 
 ### US-13.1 Remove mock data fallbacks
 **As a** trader, **I want** the app to show real data or clear empty states, **so that** I am not misled by sample charts.
@@ -399,7 +399,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 14: Testing & Observability
+## Epic 14: Testing & Observability *(Partial; US-14.3 frontend component tests not added and `/api/health` does not yet probe DB/Hyperliquid)*
 
 ### US-14.1 Add backend endpoint smoke tests
 **As a** developer, **I want** all FastAPI endpoints covered by smoke tests, **so that** broken routes are caught in CI.
