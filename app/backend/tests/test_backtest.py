@@ -86,7 +86,15 @@ def test_run_backtest_returns_expected_summary_and_curves(mock_hyperliquid_clien
     assert len(result["price"]) > 0
     for point in result["price"]:
         assert "time" in point
+        assert {"open", "high", "low", "close", "volume"} <= point.keys()
         assert "close" in point
+    first_source = mock_hyperliquid_client.candles[0]
+    first_price = result["price"][0]
+    assert first_price["open"] == first_source["open"]
+    assert first_price["high"] == first_source["high"]
+    assert first_price["low"] == first_source["low"]
+    assert first_price["close"] == first_source["close"]
+    assert first_price["volume"] == first_source["volume"]
 
     for trade in result["trades"]:
         assert "confidence" in trade
