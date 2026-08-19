@@ -62,5 +62,6 @@ class PositionRecord(BaseModel):
     liquidationPrice: float | None
     margin: float
     status: str
+    mode: Literal["paper", "live"] = "paper"
     openedAt: str
     closedAt: str | None

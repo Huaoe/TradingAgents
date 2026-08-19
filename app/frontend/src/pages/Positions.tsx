@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, X, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { Card } from '../components/Card';
-import { fetchPositions, fetchOrders, closePosition } from '../services/api';
+import { fetchPositions, fetchOrders, closePosition, fetchReconciliation, reconcileWallet } from '../services/api';
 import { useWallet } from '../context/useWallet';
-import type { Position, Order } from '../types';
+import type { Position, Order, ReconciliationResult } from '../types';
 
 export function Positions() {
   const { selectedWallet } = useWallet();
@@ -11,15 +11,19 @@ export function Positions() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [reconciliation, setReconciliation] = useState<ReconciliationResult | null>(null);
+  const [reconciling, setReconciling] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const walletId = selectedWallet?.id;
-      const [p, o] = await Promise.all([fetchPositions(walletId), fetchOrders(walletId)]);
+      if (!walletId) return;
+      const [p, o, r] = await Promise.all([fetchPositions(walletId), fetchOrders(walletId), fetchReconciliation(walletId)]);
       setPositions(p);
       setOrders(o);
+      setReconciliation(r);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load');
     } finally {
@@ -43,12 +47,26 @@ export function Positions() {
     setLoading(true);
     setError('');
     try {
-      await closePosition({ positionId, walletId: selectedWallet.id, mode: 'paper' });
+      const position = positions.find((item) => item.id === positionId);
+      await closePosition({ positionId, walletId: selectedWallet.id, mode: position?.mode || 'paper' });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Close failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReconcile = async () => {
+    if (!selectedWallet) return;
+    setReconciling(true);
+    setError('');
+    try {
+      setReconciliation(await reconcileWallet(selectedWallet.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Reconciliation failed');
+    } finally {
+      setReconciling(false);
     }
   };
 
@@ -86,12 +104,60 @@ export function Positions() {
       )}
 
       <Card>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-medium">Exchange Reconciliation</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              {reconciliation
+                ? `Last run ${new Date(reconciliation.timestamp).toLocaleString()}`
+                : 'No reconciliation has run yet.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`text-xs px-2 py-1 rounded border ${
+              reconciliation?.status === 'ok'
+                ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10'
+                : reconciliation?.status === 'unavailable'
+                  ? 'text-amber-400 border-amber-500/20 bg-amber-500/10'
+                  : 'text-rose-400 border-rose-500/20 bg-rose-500/10'
+            }`}>
+              {reconciliation?.status || 'not run'}
+            </span>
+            <button
+              onClick={handleReconcile}
+              disabled={reconciling}
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 disabled:opacity-60 text-sm"
+            >
+              {reconciling ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />}
+              Reconcile now
+            </button>
+          </div>
+        </div>
+        {reconciliation?.error && (
+          <p className="mt-3 text-sm text-amber-300">{reconciliation.error}</p>
+        )}
+        {reconciliation && reconciliation.divergences.length > 0 && (
+          <ul className="mt-4 space-y-2 text-sm">
+            {reconciliation.divergences.map((divergence, index) => (
+              <li key={`${divergence.type}-${divergence.symbol || index}`} className="text-gray-300">
+                <span className="text-rose-300">{divergence.type}</span>: {divergence.message}
+              </li>
+            ))}
+          </ul>
+        )}
+        {reconciliation?.status === 'ok' && (
+          <p className="mt-3 text-sm text-emerald-300">Local live positions match the exchange.</p>
+        )}
+      </Card>
+
+      <Card>
         <h2 className="text-lg font-medium mb-4">Open Positions</h2>
         <div className="overflow-x-auto -mx-5 px-5">
           <table className="w-full text-sm text-left min-w-[640px]">
             <thead className="text-gray-400 border-b border-gray-800">
               <tr>
                 <th className="pb-3 font-medium">Market</th>
+                <th className="pb-3 font-medium">Mode</th>
                 <th className="pb-3 font-medium">Side</th>
                 <th className="pb-3 font-medium">Size</th>
                 <th className="pb-3 font-medium">Entry</th>
@@ -106,6 +172,15 @@ export function Positions() {
               {positions.filter((p) => p.status === 'open').map((pos) => (
                 <tr key={pos.id}>
                   <td className="py-3 font-medium">{pos.symbol}</td>
+                  <td className="py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded border ${
+                      pos.mode === 'live'
+                        ? 'text-rose-300 border-rose-500/20 bg-rose-500/10'
+                        : 'text-emerald-300 border-emerald-500/20 bg-emerald-500/10'
+                    }`}>
+                      {pos.mode}
+                    </span>
+                  </td>
                   <td className={`py-3 ${pos.side === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}`}>{pos.side}</td>
                   <td className="py-3">{pos.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
                   <td className="py-3 text-gray-400">${pos.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
@@ -128,7 +203,7 @@ export function Positions() {
                 </tr>
               ))}
               {positions.filter((p) => p.status === 'open').length === 0 && (
-                <tr><td colSpan={9} className="py-4 text-gray-500">No open positions.</td></tr>
+                <tr><td colSpan={10} className="py-4 text-gray-500">No open positions.</td></tr>
               )}
             </tbody>
           </table>

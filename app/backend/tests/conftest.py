@@ -14,6 +14,8 @@ import backend.main as main_module
 import backend.services.backtest as backtest_module
 import backend.services.execution_engine as execution_engine_module
 import backend.services.hyperliquid_client as hyperliquid_client_module
+import backend.services.portfolio_engine as portfolio_engine_module
+import backend.services.reconciliation as reconciliation_module
 import backend.services.signal_engine as signal_engine_module
 
 
@@ -84,6 +86,16 @@ class MockHyperliquidClient:
             "imbalance": 0.5,
         }
         self.funding: list[dict[str, Any]] = []
+        self.clearinghouse: dict[str, Any] = {
+            "marginSummary": {
+                "accountValue": "10000.0",
+                "totalMarginUsed": "0.0",
+                "withdrawable": "10000.0",
+            },
+            "assetPositions": [],
+        }
+        self.fills: list[dict[str, Any]] = []
+        self.user_funding: list[dict[str, Any]] = []
         self.user_fees: dict[str, Any] = {
             "userCrossRate": "0.00045",
             "userAddRate": "0.00015",
@@ -143,6 +155,32 @@ class MockHyperliquidClient:
     def estimate_slippage(self, symbol: str, notional: float) -> float:
         return 0.00005
 
+    def get_clearinghouse_state(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        return self.clearinghouse
+
+    def get_user_fills(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.fills
+
+    def get_user_funding_history(
+        self,
+        address: str,
+        start_ms: int,
+        end_ms: int | None = None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.user_funding
+
 
 @pytest.fixture(autouse=True)
 def isolated_stores(monkeypatch, tmp_path):
@@ -179,6 +217,7 @@ def isolated_stores(monkeypatch, tmp_path):
 
     # Reset in-memory counters that are not tied to a store.
     main_module._METRICS["backtests_run"] = 0
+    main_module._HEALTH_CACHE = None
 
 
 @pytest.fixture
@@ -194,6 +233,8 @@ def mock_hyperliquid_client(monkeypatch, isolated_stores):
     monkeypatch.setattr(backtest_module, "HyperliquidClient", MockHyperliquidClient)
     monkeypatch.setattr(signal_engine_module, "HyperliquidClient", MockHyperliquidClient)
     monkeypatch.setattr(execution_engine_module, "HyperliquidClient", MockHyperliquidClient)
+    monkeypatch.setattr(portfolio_engine_module, "HyperliquidClient", MockHyperliquidClient)
+    monkeypatch.setattr(reconciliation_module, "HyperliquidClient", MockHyperliquidClient)
 
     # Keep background refresh loops from firing during short-running tests.
     monkeypatch.setattr(main_module, "REFRESH_INTERVAL", 999_999)

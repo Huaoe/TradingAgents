@@ -25,7 +25,10 @@ class HyperliquidClient:
     _market_cache_expiry: dict[str, float] = {}
     _user_fee_cache: dict[str, dict[str, Any]] = {}
     _user_fee_cache_expiry: dict[str, float] = {}
+    _user_state_cache: dict[str, dict[str, Any]] = {}
+    _user_state_cache_expiry: dict[str, float] = {}
     _cache_ttl_seconds = 10.0
+    _user_state_ttl_seconds = 2.0
     _max_funding_pages = 1_000
 
     def __new__(cls) -> HyperliquidClient:
@@ -48,6 +51,8 @@ class HyperliquidClient:
         cls._market_cache_expiry.clear()
         cls._user_fee_cache.clear()
         cls._user_fee_cache_expiry.clear()
+        cls._user_state_cache.clear()
+        cls._user_state_cache_expiry.clear()
 
     @classmethod
     def _cached_markets(
@@ -282,6 +287,58 @@ class HyperliquidClient:
         self._user_fee_cache[key] = result
         self._user_fee_cache_expiry[key] = now + self._cache_ttl_seconds
         return result
+
+    def get_clearinghouse_state(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Return the exchange's current margin and asset-position state."""
+        key = f"clearinghouse:{address.lower()}"
+        now = time.monotonic()
+        if not force and self._user_state_cache_expiry.get(key, 0.0) > now:
+            return self._user_state_cache[key]
+        state = dict(self.info.user_state(address))
+        self._user_state_cache[key] = state
+        self._user_state_cache_expiry[key] = now + self._user_state_ttl_seconds
+        return state
+
+    def get_user_fills(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return recent user fills with a short cache because fills can lag orders."""
+        key = f"fills:{address.lower()}"
+        now = time.monotonic()
+        if not force and self._user_state_cache_expiry.get(key, 0.0) > now:
+            return self._user_state_cache[key]["fills"]
+        fills = [dict(fill) for fill in self.info.user_fills(address)]
+        self._user_state_cache[key] = {"fills": fills}
+        self._user_state_cache_expiry[key] = now + self._user_state_ttl_seconds
+        return fills
+
+    def get_user_funding_history(
+        self,
+        address: str,
+        start_ms: int,
+        end_ms: int | None = None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return signed funding cash flows for a wallet over a short-lived window."""
+        if end_ms is None:
+            end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        key = f"funding:{address.lower()}:{start_ms}"
+        now = time.monotonic()
+        if not force and self._user_state_cache_expiry.get(key, 0.0) > now:
+            return self._user_state_cache[key]["funding"]
+        funding = [dict(row) for row in self.info.user_funding_history(address, start_ms, end_ms)]
+        self._user_state_cache[key] = {"funding": funding}
+        self._user_state_cache_expiry[key] = now + self._user_state_ttl_seconds
+        return funding
 
     def estimate_slippage(self, symbol: str, notional: float) -> float:
         if notional <= 0:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
+
+import backend.services.execution_store as execution_store_module
 from backend.services.execution_store import ExecutionStore
 
 
@@ -87,3 +90,37 @@ def test_list_positions_filters_by_wallet():
     b_positions = store.list_open_positions("wallet-b")
     assert all(p["walletId"] == "wallet-b" for p in b_positions)
     assert len(b_positions) == 1
+
+
+def test_position_mode_migrates_and_backfills_from_originating_order():
+    conn = sqlite3.connect(execution_store_module.DB_PATH)
+    conn.executescript(
+        """
+        CREATE TABLE orders (
+            id TEXT PRIMARY KEY, signal_id TEXT, wallet_id TEXT, symbol TEXT, side TEXT,
+            size REAL, price REAL, notional REAL, leverage INTEGER, fees REAL,
+            type TEXT, mode TEXT, status TEXT, timestamp TEXT, meta TEXT
+        );
+        CREATE TABLE positions (
+            id TEXT PRIMARY KEY, order_id TEXT, wallet_id TEXT, symbol TEXT, side TEXT,
+            entry_price REAL, mark_price REAL, size REAL, notional REAL, leverage INTEGER,
+            pnl REAL, pnl_pct REAL, liquidation_price REAL, margin REAL, status TEXT,
+            opened_at TEXT, closed_at TEXT
+        );
+        INSERT INTO orders VALUES (
+            'ord-live', NULL, 'wallet-1', 'BTC', 'Buy', 1, 100, 100, 2, 0.1,
+            'Market', 'live', 'filled', '2024-01-01T00:00:00+00:00', NULL
+        );
+        INSERT INTO positions VALUES (
+            'pos-live', 'ord-live', 'wallet-1', 'BTC', 'Buy', 100, 100, 1, 100, 2,
+            0, 0, NULL, 50, 'open', '2024-01-01T00:00:00+00:00', NULL
+        );
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    position = ExecutionStore().get_position("pos-live")
+
+    assert position is not None
+    assert position["mode"] == "live"

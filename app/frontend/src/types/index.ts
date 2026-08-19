@@ -49,6 +49,7 @@ export interface Position {
   margin: number;
   leverage: number;
   status: string;
+  mode: 'paper' | 'live';
   openedAt: string;
   closedAt: string | null;
 }
@@ -61,6 +62,7 @@ export interface Order {
   price: number;
   type: 'Market' | 'Limit';
   status: 'filled' | 'open' | 'cancelled';
+  mode?: 'paper' | 'live';
   timestamp: string;
 }
 
@@ -68,6 +70,7 @@ export interface Account {
   walletId?: string;
   wallet?: string;
   mode?: string;
+  balanceSource?: 'paper_store' | 'exchange';
   balance: number;
   totalValue: number;
   available: number;
@@ -89,6 +92,23 @@ export interface Health {
   status: string;
   network: 'mainnet' | 'testnet';
   time: string;
+  liveTradingEnabled?: boolean;
+  dependencies?: Record<string, unknown>;
+}
+
+export interface ReconciliationResult {
+  id: string;
+  walletId: string;
+  timestamp: string;
+  status: 'ok' | 'diverged' | 'unavailable';
+  divergences: Array<{
+    type: string;
+    severity: string;
+    symbol?: string;
+    message: string;
+    [key: string]: unknown;
+  }>;
+  error?: string | null;
 }
 
 export interface PortfolioHistoryPoint {
