@@ -11,6 +11,7 @@ import { Backtest } from './pages/Backtest';
 import { Wallets } from './pages/Wallets';
 import { Alerts } from './pages/Alerts';
 import { Journal } from './pages/Journal';
+import { StrategyFinder } from './pages/StrategyFinder';
 
 function App() {
   return (
@@ -29,6 +30,7 @@ function App() {
             <Route path="/strategies/new" element={<StrategyEditor />} />
             <Route path="/strategies/:id" element={<StrategyEditor />} />
             <Route path="/backtest" element={<Backtest />} />
+            <Route path="/strategy-finder" element={<StrategyFinder />} />
           </Routes>
         </Layout>
       </WalletProvider>

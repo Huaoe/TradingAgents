@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput, PortfolioHistoryPoint, Health } from '../types';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -118,6 +118,17 @@ export async function runBacktest(input: BacktestInput): Promise<BacktestResult>
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export async function startStrategySearch(input: StrategySearchInput): Promise<StrategySearchJob> {
+  return api<StrategySearchJob>('/api/strategy-search', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchStrategySearch(searchId: string): Promise<StrategySearchJob> {
+  return api<StrategySearchJob>(`/api/strategy-search/${encodeURIComponent(searchId)}`);
 }
 
 export interface UserFees {

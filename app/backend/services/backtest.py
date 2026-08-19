@@ -226,32 +226,23 @@ def _compute_signals(df: pd.DataFrame, strategy: dict[str, Any]) -> pd.DataFrame
     return pd.DataFrame({"signal": signals, "confidence": confidences})
 
 
-def run_backtest(
+def load_backtest_frame(
     symbol: str,
     interval: str,
     start_at: str,
     end_at: str,
-    strategy: dict[str, Any] | None = None,
-    initial_balance: float = 10_000.0,
-    maker_fee: float = 0.00015,
-    taker_fee: float = 0.00045,
-    slippage_pct: float = 0.00005,
-    order_type: str = "taker",
-    fee_source: str = "generic_default",
-    slippage_source: str = "default",
-) -> dict[str, Any]:
-    """Run a bar-by-bar backtest and return a dict compatible with ``BacktestResult``."""
-    strategy = _load_strategy(strategy or {})
+    client: HyperliquidClient | None = None,
+) -> pd.DataFrame:
+    """Load and prepare the historical frame used by one or more simulations."""
     start_dt = _parse_iso(start_at)
     end_dt = _parse_iso(end_at)
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
 
-    client = HyperliquidClient()
+    client = client or HyperliquidClient()
     candles = client.get_candles(symbol, interval, start_ms, end_ms)
     if not candles:
         candles = _yfinance_candles(symbol, start_dt, end_dt, interval)
-
     if not candles:
         raise ValueError(f"No candle data for {symbol} in the selected range")
 
@@ -263,7 +254,35 @@ def run_backtest(
         funding = client.get_funding_history(symbol, start_ms=start_ms, end_ms=end_ms)
     except Exception:
         funding = []
-    df = _merge_funding(df, funding)
+    return _merge_funding(df, funding)
+
+
+def attach_signals(df: pd.DataFrame, strategy: dict[str, Any] | None = None) -> pd.DataFrame:
+    """Attach strategy signals while preserving the shared signal computation hook."""
+    frame = df.copy()
+    out = _compute_signals(frame, _load_strategy(strategy or {}))
+    frame["signal"] = out["signal"]
+    frame["confidence"] = out["confidence"]
+    return frame
+
+
+def _simulate_backtest(
+    df: pd.DataFrame,
+    symbol: str,
+    interval: str,
+    strategy: dict[str, Any] | None = None,
+    initial_balance: float = 10_000.0,
+    maker_fee: float = 0.00015,
+    taker_fee: float = 0.00045,
+    slippage_pct: float = 0.00005,
+    order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
+    max_leverage: int = 3,
+    include_price: bool = True,
+) -> dict[str, Any]:
+    """Simulate a prepared frame and return a dict compatible with ``BacktestResult``."""
+    strategy = _load_strategy(strategy or {})
 
     cfg = strategy.get("riskConfig") or {}
     leverage = max(1, int(_safe_float(cfg.get("leverage"), 3)))
@@ -279,13 +298,7 @@ def run_backtest(
     trailing_stop_pct = max(0.0, _safe_float(cfg.get("trailingStopPct"), 0.0))
     order_type = order_type if order_type in {"maker", "taker"} else "taker"
 
-    market = client.get_market(symbol) or {}
-    max_leverage = int(market.get("maxLeverage") or 3)
-    leverage = min(leverage, max_leverage)
-
-    out = _compute_signals(df, strategy)
-    df["signal"] = out["signal"]
-    df["confidence"] = out["confidence"]
+    leverage = min(leverage, max(1, int(max_leverage)))
 
     confidence_floor_value = int(_safe_float(cfg.get("confidenceFloor"), 60))
     final_signal = int(df["signal"].iloc[-1]) if not df.empty else 0
@@ -313,8 +326,17 @@ def run_backtest(
     lowest_price = 0.0
 
     fee_rate = maker_fee if order_type == "maker" else taker_fee + slippage_pct
+    times = list(df.index)
+    opens = df["open"].to_numpy(dtype=float)
+    highs = df["high"].to_numpy(dtype=float)
+    lows = df["low"].to_numpy(dtype=float)
+    closes = df["close"].to_numpy(dtype=float)
+    volumes = df["volume"].to_numpy(dtype=float)
+    signals = df["signal"].to_numpy()
+    confidences = df["confidence"].to_numpy()
+    funding_events = df["fundingEvents"].tolist()
 
-    def mark_equity(current_price: float, current_time: pd.Timestamp, candle: pd.Series) -> None:
+    def mark_equity(current_price: float, current_time: pd.Timestamp, bar_index: int) -> None:
         nonlocal peak
         unrealized = 0.0
         if position != 0 and entry_price:
@@ -328,16 +350,17 @@ def run_backtest(
             peak = total
         dd = (peak - total) / peak if peak > 0 else 0.0
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
-        price_curve.append(
-            {
-                "time": current_time.isoformat(),
-                "open": round(float(candle["open"]), 8),
-                "high": round(float(candle["high"]), 8),
-                "low": round(float(candle["low"]), 8),
-                "close": round(float(current_price), 8),
-                "volume": round(float(candle.get("volume", 0.0)), 8),
-            }
-        )
+        if include_price:
+            price_curve.append(
+                {
+                    "time": current_time.isoformat(),
+                    "open": round(float(opens[bar_index]), 8),
+                    "high": round(float(highs[bar_index]), 8),
+                    "low": round(float(lows[bar_index]), 8),
+                    "close": round(float(current_price), 8),
+                    "volume": round(float(volumes[bar_index]), 8),
+                }
+            )
 
     def open_position(new_position: int, price: float, time: pd.Timestamp, confidence: int) -> None:
         nonlocal \
@@ -429,16 +452,14 @@ def run_backtest(
         highest_price = 0.0
         lowest_price = 0.0
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        price = row["close"]
-        time = df.index[i]
-        signal = int(row["signal"])
+    for i, time in enumerate(times):
+        price = closes[i]
+        signal = int(signals[i])
 
         # Funding cost for holding the position through this bar.
         if position != 0 and entry_notional:
             funding_cost = 0.0
-            for hourly_rate in row.get("fundingEvents", []):
+            for hourly_rate in funding_events[i]:
                 rate = max(-0.04, min(0.04, _safe_float(hourly_rate)))
                 funding_cost += position * position_size_coin * price * rate
             cash = float(cash - funding_cost)
@@ -447,8 +468,8 @@ def run_backtest(
         protective_exit = None
         protective_price = None
         if position != 0 and i > entry_bar_index:
-            high = float(row["high"])
-            low = float(row["low"])
+            high = highs[i]
+            low = lows[i]
             if position == 1:
                 stop_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct else None
                 target_price = entry_price * (1 + take_profit_pct) if take_profit_pct else None
@@ -508,11 +529,9 @@ def run_backtest(
             can_signal_exit = i - entry_bar_index >= min_hold_bars
             if signal == 0 and exit_hysteresis is not None:
                 if position == 1:
-                    can_signal_exit = can_signal_exit and float(row["confidence"]) < exit_hysteresis
+                    can_signal_exit = can_signal_exit and confidences[i] < exit_hysteresis
                 else:
-                    can_signal_exit = (
-                        can_signal_exit and float(row["confidence"]) > 100 - exit_hysteresis
-                    )
+                    can_signal_exit = can_signal_exit and confidences[i] > 100 - exit_hysteresis
             if can_signal_exit:
                 close_position(price, time, "signal")
 
@@ -521,13 +540,13 @@ def run_backtest(
             and signal != 0
             and (cooldown_bars == 0 or i - last_exit_bar_index > cooldown_bars)
         ):
-            open_position(signal, price, time, int(row["confidence"]))
+            open_position(signal, price, time, int(confidences[i]))
 
-        mark_equity(price, time, row)
+        mark_equity(price, time, i)
 
     # Close any open position at the final close.
     if position != 0:
-        close_position(df["close"].iloc[-1], df.index[-1], "end_of_backtest")
+        close_position(closes[-1], times[-1], "end_of_backtest")
 
     final_equity = float(equity_curve[-1]["equity"]) if equity_curve else float(cash)
     total_return = float(
@@ -565,8 +584,8 @@ def run_backtest(
 
     # Monthly returns heatmap
     monthly: dict[str, float] = defaultdict(float)
-    for pt in equity_curve:
-        ts = pd.to_datetime(pt["time"])
+    for timestamp, pt in zip(times, equity_curve, strict=True):
+        ts = timestamp
         key = f"{ts.year}-{ts.month:02d}"
         monthly[key] = pt["equity"]
     monthly_returns: dict[str, float] = {}
@@ -588,8 +607,10 @@ def run_backtest(
     avg_trade_confidence = float(
         sum(t["confidence"] for t in trades) / len(trades) if trades else 0.0
     )
-    non_flat_signals = df.loc[df["signal"] != 0, "confidence"]
-    avg_signal_confidence = float(non_flat_signals.mean()) if not non_flat_signals.empty else 0.0
+    non_flat_confidences = confidences[signals != 0]
+    avg_signal_confidence = (
+        float(non_flat_confidences.mean()) if len(non_flat_confidences) else 0.0
+    )
 
     summary = {
         "initialBalance": _fmt(initial_balance),
@@ -642,3 +663,39 @@ def run_backtest(
         "trades": trades,
         "monthlyReturns": monthly_returns,
     }
+
+
+def run_backtest(
+    symbol: str,
+    interval: str,
+    start_at: str,
+    end_at: str,
+    strategy: dict[str, Any] | None = None,
+    initial_balance: float = 10_000.0,
+    maker_fee: float = 0.00015,
+    taker_fee: float = 0.00045,
+    slippage_pct: float = 0.00005,
+    order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
+) -> dict[str, Any]:
+    """Load, signal, and simulate one historical backtest."""
+    client = HyperliquidClient()
+    frame = load_backtest_frame(symbol, interval, start_at, end_at, client=client)
+    market = client.get_market(symbol) or {}
+    max_leverage = int(market.get("maxLeverage") or 3)
+    frame = attach_signals(frame, strategy)
+    return _simulate_backtest(
+        frame,
+        symbol=symbol,
+        interval=interval,
+        strategy=strategy,
+        initial_balance=initial_balance,
+        maker_fee=maker_fee,
+        taker_fee=taker_fee,
+        slippage_pct=slippage_pct,
+        order_type=order_type,
+        fee_source=fee_source,
+        slippage_source=slippage_source,
+        max_leverage=max_leverage,
+    )

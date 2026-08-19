@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Radio, Wallet as WalletIcon, Bot, Cpu, LineChart, Settings, Bell, BookOpen, Menu, X } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Radio, Wallet as WalletIcon, Bot, Cpu, LineChart, Settings, Bell, BookOpen, Menu, X, Search } from 'lucide-react';
 import { useWallet } from '../context/useWallet';
 import { fetchUnreadAlertCount } from '../services/api';
 
@@ -9,6 +9,7 @@ const nav = [
   { path: '/scanner', label: 'Scanner', icon: ScanLine },
   { path: '/strategies', label: 'Strategies', icon: Cpu },
   { path: '/backtest', label: 'Backtest', icon: LineChart },
+  { path: '/strategy-finder', label: 'Strategy Finder', icon: Search },
   { path: '/signals', label: 'Signals', icon: Radio },
   { path: '/positions', label: 'Positions', icon: WalletIcon },
   { path: '/alerts', label: 'Alerts', icon: Bell },

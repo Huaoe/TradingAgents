@@ -245,6 +245,163 @@ export interface BacktestInput {
   slippageSource?: 'default' | 'live_book';
 }
 
+export interface StrategySearchInput {
+  symbol: string;
+  interval: BacktestInterval;
+  startAt: string;
+  endAt: string;
+  templates?: string[] | null;
+  folds: number;
+  minTradesIS: number;
+  gridPreset: 'standard' | 'coarse';
+  initialBalance: number;
+  makerFee: number;
+  takerFee: number;
+  slippagePct: number;
+  orderType: 'maker' | 'taker';
+  feeSource: 'generic_default' | 'wallet' | 'manual';
+  slippageSource: 'default' | 'live_book';
+}
+
+export interface StrategySearchScore {
+  perBarSharpe: number | null;
+  annualisedSharpe: number | null;
+  returnPct: number;
+  benchmarkReturnPct: number;
+  trades: number;
+  maxDrawdownPct: number;
+}
+
+export interface StrategySearchCandidate {
+  candidateId: string;
+  template: string;
+  overrides: Record<string, number>;
+  riskConfig: Record<string, number | null>;
+  meanInSampleSharpePerBar: number | null;
+  meanOutOfSampleSharpePerBar: number | null;
+  medianOutOfSampleSharpePerBar: number | null;
+  medianOutOfSampleSharpeAnnualised: number | null;
+  meanInSampleSharpeAnnualised: number | null;
+  meanOutOfSampleSharpeAnnualised: number | null;
+  meanOutOfSampleReturnPct: number;
+  medianOutOfSampleReturnPct: number;
+  totalOutOfSampleTrades: number;
+  foldsWithTrades: number;
+  worstFold: {
+    fold: number;
+    returnPct: number;
+    perBarSharpe: number | null;
+  };
+  overfitGap: number | null;
+  overfitGapAnnualised: number | null;
+  fullRange: {
+    returnPct: number;
+    trades: number;
+    perBarSharpe: number | null;
+    annualisedSharpe: number | null;
+  };
+}
+
+export interface StrategySearchSelectedFold {
+  fold: number;
+  trainStart: string;
+  trainEnd: string;
+  testStart: string;
+  testEnd: string;
+  candidateId: string;
+  template: string;
+  overrides: Record<string, number>;
+  inSample: StrategySearchScore;
+  outOfSample: StrategySearchScore;
+}
+
+export interface StrategySearchSkippedFold {
+  fold: number;
+  trainStart: string;
+  trainEnd: string;
+  testStart: string;
+  testEnd: string;
+  reason: string;
+}
+
+export interface StrategySearchRegimeBucket {
+  regime: string;
+  fundingRegime: string;
+  volRegime: string;
+  trades: number;
+  wins: number;
+  netPnl: number;
+  winRatePct: number;
+  avgReturnPct: number;
+  sufficient: boolean;
+}
+
+export interface StrategySearchRegimeBreakdown {
+  candidateId: string;
+  template: string;
+  regimes: StrategySearchRegimeBucket[];
+}
+
+export interface StrategySearchResult {
+  symbol: string;
+  interval: BacktestInterval;
+  startAt: string;
+  endAt: string;
+  folds: number;
+  minTradesIS: number;
+  gridPreset: 'standard' | 'coarse';
+  candidateCount: number;
+  simulationCount: number;
+  selection: {
+    returnPct: number;
+    buyAndHoldReturnPct: number;
+    foldsConsidered: number;
+    foldsSkipped: number;
+    selectedFolds: StrategySearchSelectedFold[];
+    skippedFolds: StrategySearchSkippedFold[];
+  };
+  skippedFolds: StrategySearchSkippedFold[];
+  candidates: StrategySearchCandidate[];
+  rankCorrelation: number | null;
+  fullRangeWinner: {
+    candidateId: string;
+    template: string;
+    overrides: Record<string, number>;
+    riskConfig: Record<string, number | null>;
+    returnPct: number;
+    trades: number;
+    perBarSharpe: number | null;
+    annualisedSharpe: number | null;
+  };
+  deflatedSharpeRatio: {
+    dsr: number | null;
+    significant: boolean;
+    observedSharpe: number | null;
+    expectedMaxSharpe: number | null;
+    trials: number;
+    observations: number;
+    skew: number | null;
+    kurtosis: number | null;
+    reason: string | null;
+  } | null;
+  regimeBreakdown: StrategySearchRegimeBreakdown[];
+}
+
+export interface StrategySearchProgress {
+  completed: number;
+  total: number;
+}
+
+export interface StrategySearchJob {
+  id: string;
+  status: 'queued' | 'running' | 'done' | 'error';
+  candidateCount: number;
+  simulationCount: number;
+  progress: StrategySearchProgress;
+  result: StrategySearchResult | null;
+  error: string | null;
+}
+
 export interface Wallet {
   id: string;
   name: string;

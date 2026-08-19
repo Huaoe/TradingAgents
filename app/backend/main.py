@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
+import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +24,7 @@ from backend.models.execution import ClosePositionRequest, ExecuteRequest
 from backend.models.portfolio import LiveModeRequest, PortfolioSummary
 from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
+from backend.models.strategy_search import StrategySearchJob, StrategySearchRequest
 from backend.models.wallet import WalletCreate, WalletUpdate
 from backend.services.alert_engine import AlertEngine
 from backend.services.backtest import run_backtest
@@ -32,6 +35,11 @@ from backend.services.hyperliquid_config import get_hyperliquid_network
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
+from backend.services.strategy_search import (
+    prepare_strategy_search,
+    run_strategy_search,
+    simulation_count,
+)
 from backend.services.strategy_store import StrategyStore
 from backend.services.wallet_store import WalletStore
 
@@ -40,6 +48,9 @@ logger = logging.getLogger(__name__)
 # In-memory observability counters.  Persistent totals are read from the
 # individual stores so metrics survive restarts where data is stored.
 _METRICS: dict[str, int] = {"backtests_run": 0}
+_SEARCH_JOBS: dict[str, dict[str, Any]] = {}
+_SEARCH_JOBS_LOCK = threading.Lock()
+_MAX_SEARCH_JOBS = 5
 
 REFRESH_INTERVAL = 10
 HISTORY_INTERVAL = 60
@@ -102,6 +113,71 @@ class AnalyzeRequest(BaseModel):
     strategy: dict[str, Any] | None = None
     strategyId: str | None = None
     useLlm: bool = False
+
+
+def _search_progress(job_id: str, completed: int, total: int) -> None:
+    with _SEARCH_JOBS_LOCK:
+        job = _SEARCH_JOBS.get(job_id)
+        if job:
+            job["progress"] = {"completed": completed, "total": total}
+
+
+def _run_search_job(
+    job_id: str,
+    payload: StrategySearchRequest,
+    frame: Any,
+    max_leverage: int,
+) -> None:
+    with _SEARCH_JOBS_LOCK:
+        job = _SEARCH_JOBS.get(job_id)
+        if not job:
+            return
+        job["status"] = "running"
+    try:
+        result = run_strategy_search(
+            symbol=payload.symbol,
+            interval=payload.interval,
+            start_at=payload.startAt,
+            end_at=payload.endAt,
+            templates=payload.templates,
+            folds=payload.folds,
+            min_trades_is=payload.minTradesIS,
+            grid_preset=payload.gridPreset,
+            initial_balance=payload.initialBalance,
+            maker_fee=payload.makerFee,
+            taker_fee=payload.takerFee,
+            slippage_pct=payload.slippagePct,
+            order_type=payload.orderType,
+            fee_source=payload.feeSource,
+            slippage_source=payload.slippageSource,
+            progress=lambda completed, total: _search_progress(job_id, completed, total),
+            prepared_frame=frame,
+            prepared_max_leverage=max_leverage,
+        )
+        with _SEARCH_JOBS_LOCK:
+            job = _SEARCH_JOBS.get(job_id)
+            if job:
+                job["status"] = "done"
+                job["result"] = result
+                job["progress"] = {
+                    "completed": job["progress"]["total"],
+                    "total": job["progress"]["total"],
+                }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Strategy search failed: %s", exc)
+        with _SEARCH_JOBS_LOCK:
+            job = _SEARCH_JOBS.get(job_id)
+            if job:
+                job["status"] = "error"
+                job["error"] = str(exc)
+
+
+def _search_job_response(job_id: str) -> StrategySearchJob:
+    with _SEARCH_JOBS_LOCK:
+        job = _SEARCH_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Strategy search {job_id} not found")
+        return StrategySearchJob(**job)
 
 
 @app.get("/api/health")
@@ -264,6 +340,55 @@ async def backtest(payload: BacktestRequest) -> BacktestResult:
     except Exception as exc:
         logger.exception("Unexpected error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@app.post("/api/strategy-search", response_model=StrategySearchJob)
+async def strategy_search(payload: StrategySearchRequest) -> StrategySearchJob:
+    try:
+        frame, max_leverage, candidates, total = await asyncio.to_thread(
+            prepare_strategy_search,
+            payload.symbol,
+            payload.interval,
+            payload.startAt,
+            payload.endAt,
+            payload.templates,
+            payload.folds,
+            payload.gridPreset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Could not prepare strategy search: %s", exc)
+        raise HTTPException(status_code=500, detail="Could not prepare strategy search") from exc
+
+    job_id = str(uuid.uuid4())
+    with _SEARCH_JOBS_LOCK:
+        while len(_SEARCH_JOBS) >= _MAX_SEARCH_JOBS:
+            oldest_id = next(iter(_SEARCH_JOBS))
+            _SEARCH_JOBS.pop(oldest_id)
+        _SEARCH_JOBS[job_id] = {
+            "id": job_id,
+            "status": "queued",
+            "candidateCount": len(candidates),
+            "simulationCount": simulation_count(len(candidates), payload.folds),
+            "progress": {"completed": 0, "total": total},
+            "result": None,
+            "error": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_search_job,
+        args=(job_id, payload, frame, max_leverage),
+        name=f"strategy-search-{job_id[:8]}",
+        daemon=True,
+    )
+    thread.start()
+    return _search_job_response(job_id)
+
+
+@app.get("/api/strategy-search/{search_id}", response_model=StrategySearchJob)
+async def strategy_search_status(search_id: str) -> StrategySearchJob:
+    return _search_job_response(search_id)
 
 
 @app.get("/api/candles/{symbol}")
