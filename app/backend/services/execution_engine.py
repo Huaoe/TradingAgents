@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -11,7 +11,10 @@ from backend.models.wallet import Wallet
 from backend.services.alert_engine import AlertEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
-from backend.services.hyperliquid_config import get_hyperliquid_base_url
+from backend.services.hyperliquid_config import (
+    get_hyperliquid_base_url,
+    is_live_trading_enabled,
+)
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_store import SignalStore
 from backend.services.wallet_store import WalletStore
@@ -22,6 +25,7 @@ PAPER_SLIPPAGE = 0.0005
 FILL_LOOKUP_ATTEMPTS = 3
 FILL_LOOKUP_DELAY_SECONDS = 0.2
 PNL_DIVERGENCE_TOLERANCE = 0.01
+logger = logging.getLogger(__name__)
 
 
 def _side_for_signal(action: str) -> str:
@@ -82,7 +86,11 @@ def _fill_metrics(fills: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "size": total_size,
         "price": weighted_notional / total_size if total_size else 0.0,
-        "fees": sum(float(fill.get("fee") or fill.get("feeUsd") or 0.0) for fill in fills),
+        "fees": sum(
+            float(fill.get("fee") or fill.get("feeUsd") or 0.0)
+            + float(fill.get("builderFee") or fill.get("builderFeeUsd") or 0.0)
+            for fill in fills
+        ),
         "closedPnl": sum(float(fill.get("closedPnl") or 0.0) for fill in fills),
     }
 
@@ -113,11 +121,6 @@ def _live_exchange(wallet: Wallet, private_key: str):
         get_hyperliquid_base_url(),
         account_address=wallet.address,
     )
-
-
-def _live_trading_enabled() -> bool:
-    """Return whether the process-wide live-trading gate is enabled."""
-    return os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
 
 
 def _set_live_leverage(exchange: Any, symbol: str, leverage: int) -> None:
@@ -420,6 +423,7 @@ class ExecutionEngine:
                     )
                 except Exception:  # noqa: BLE001
                     funding_paid = 0.0
+                # This assumes Hyperliquid closedPnl is gross of fees; verify against the UI.
                 net_pnl = exchange_closed_pnl - fees - funding_paid
                 cost_source = "exchange_fills"
             else:
@@ -449,6 +453,7 @@ class ExecutionEngine:
                 order["meta"]["fundingPaid"] = funding_paid
                 order["meta"]["fundingRecords"] = funding_rows
                 order["meta"]["exchangeClosedPnl"] = exchange_closed_pnl
+                order["meta"]["netPnlBasis"] = "exchangeClosedPnl - fees - funding"
             self.store.update_order(order)
 
         if mode == "live" and exchange_closed_pnl is not None:
@@ -469,7 +474,7 @@ class ExecutionEngine:
         return {"position": self._normalize_position_side(position), "netPnl": round(net_pnl, 4)}
 
     def _require_live_gates(self, wallet_id: str) -> None:
-        if not _live_trading_enabled():
+        if not is_live_trading_enabled():
             raise ValueError("Global live trading gate is off. Set LIVE_TRADING=true to enable.")
         if not self.portfolio_engine.portfolio_store.is_live_enabled(wallet_id):
             raise ValueError(
@@ -500,16 +505,23 @@ class ExecutionEngine:
                         if position_value:
                             pos["markPrice"] = abs(position_value / size)
                         pos["pnl"] = round(float(exchange_position.get("unrealizedPnl") or 0.0), 4)
+                        pos["pnlSource"] = "exchange"
                         pos["pnlPct"] = round(
                             (pos["pnl"] / pos["notional"] * 100) if pos["notional"] else 0.0,
                             4,
                         )
                         return
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Exchange unrealized PnL lookup failed for %s: %s",
+                        pos["symbol"],
+                        exc,
+                    )
         market = self.client.get_market(pos["symbol"])
         if not market:
+            pos["pnlSource"] = "mark_price"
             return
+        pos["pnlSource"] = "mark_price"
         mark = market.get("markPrice") or market.get("price") or pos["entryPrice"]
         pos["markPrice"] = mark
         if pos["side"] == "Buy":
@@ -536,6 +548,8 @@ class ExecutionEngine:
         for pos in positions:
             if pos["status"] == "open":
                 self._compute_live_pnl(pos)
+            else:
+                pos["pnlSource"] = "mark_price"
             pos["side"] = "LONG" if pos["side"] == "Buy" else "SHORT"
         return positions
 

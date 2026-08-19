@@ -20,6 +20,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from tradingagents.llm_clients import model_catalog
 
+import backend.services.alert_store as alert_store
+import backend.services.execution_store as execution_store
+import backend.services.llm_usage_store as llm_usage_store
+import backend.services.portfolio_engine as portfolio_engine
+import backend.services.signal_store as signal_store
+import backend.services.strategy_store as strategy_store_module
+import backend.services.wallet_store as wallet_store
 from backend.models.alert import AlertReadRequest
 from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.execution import ClosePositionRequest, ExecuteRequest
@@ -34,7 +41,10 @@ from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
-from backend.services.hyperliquid_config import get_hyperliquid_network
+from backend.services.hyperliquid_config import (
+    get_hyperliquid_network,
+    is_live_trading_enabled,
+)
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.reconciliation import ReconciliationService
 from backend.services.signal_engine import generate_signal
@@ -104,22 +114,13 @@ def _health_result() -> dict[str, Any]:
     if _HEALTH_CACHE and _HEALTH_CACHE[0] > now:
         return _HEALTH_CACHE[1]
 
-    from backend.services import (
-        alert_store,
-        execution_store,
-        llm_usage_store,
-        portfolio_engine,
-        signal_store,
-        wallet_store,
-    )
-
     sqlite_paths = {
         "alerts": alert_store.DB_PATH,
         "execution": execution_store.DB_PATH,
         "llmUsage": llm_usage_store.DB_PATH,
         "portfolio": portfolio_engine.DB_PATH,
         "signals": signal_store.DB_PATH,
-        "strategies": str(Path(__file__).parent / "data" / "strategies.db"),
+        "strategies": strategy_store_module.DB_PATH,
         "wallets": wallet_store.DB_PATH,
     }
     sqlite_status: dict[str, Any] = {}
@@ -145,7 +146,7 @@ def _health_result() -> dict[str, Any]:
     result = {
         "status": "ok" if db_ok and hyperliquid["status"] == "ok" else "degraded",
         "network": get_hyperliquid_network(),
-        "liveTradingEnabled": os.getenv("LIVE_TRADING", "").lower() == "true",
+        "liveTradingEnabled": is_live_trading_enabled(),
         "dependencies": dependencies,
         "time": datetime.now(timezone.utc).isoformat(),
     }

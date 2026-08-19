@@ -50,6 +50,7 @@ export interface Position {
   leverage: number;
   status: string;
   mode: 'paper' | 'live';
+  pnlSource?: 'exchange' | 'mark_price';
   openedAt: string;
   closedAt: string | null;
 }
@@ -100,7 +101,7 @@ export interface ReconciliationResult {
   id: string;
   walletId: string;
   timestamp: string;
-  status: 'ok' | 'diverged' | 'unavailable';
+  status: 'ok' | 'diverged' | 'unavailable' | 'not_applicable';
   divergences: Array<{
     type: string;
     severity: string;

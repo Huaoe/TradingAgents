@@ -117,6 +117,8 @@ export function Positions() {
             <span className={`text-xs px-2 py-1 rounded border ${
               reconciliation?.status === 'ok'
                 ? 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10'
+                : reconciliation?.status === 'not_applicable'
+                  ? 'text-sky-300 border-sky-500/20 bg-sky-500/10'
                 : reconciliation?.status === 'unavailable'
                   ? 'text-amber-400 border-amber-500/20 bg-amber-500/10'
                   : 'text-rose-400 border-rose-500/20 bg-rose-500/10'
@@ -187,6 +189,7 @@ export function Positions() {
                   <td className="py-3 text-gray-400">${pos.markPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
                   <td className={`py-3 font-medium ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toLocaleString(undefined, { maximumFractionDigits: 4 })} ({pos.pnlPct >= 0 ? '+' : ''}{pos.pnlPct.toFixed(2)}%)
+                    <span className="ml-2 text-xs text-gray-500">({pos.pnlSource || 'mark_price'})</span>
                   </td>
                   <td className="py-3">{pos.leverage}x</td>
                   <td className="py-3 text-gray-400">{pos.liquidationPrice ? `$${pos.liquidationPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '-'}</td>

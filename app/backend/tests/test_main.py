@@ -74,6 +74,17 @@ def test_health_reports_degraded_hyperliquid(test_client, mock_hyperliquid_clien
     assert body["dependencies"]["hyperliquid"]["status"] == "degraded"
 
 
+@pytest.mark.parametrize("value", ["true", "1", "yes"])
+def test_health_uses_shared_live_trading_gate(test_client, monkeypatch, value):
+    monkeypatch.setenv("LIVE_TRADING", value)
+    main_module._HEALTH_CACHE = None
+
+    response = test_client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["liveTradingEnabled"] is True
+
+
 def test_metrics_update_with_activity(test_client):
     # Wallet
     wallet_payload = {

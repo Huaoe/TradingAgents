@@ -17,7 +17,7 @@ dependencies = [
     "pandas>=2.0",
     "eth-account>=0.10",
     "python-dotenv>=1.0",
-    "yfinance==0.2.54",
+    "yfinance>=0.2.54",
 ]
 
 [project.optional-dependencies]

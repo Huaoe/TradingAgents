@@ -52,12 +52,21 @@ class FakeWallets:
 
 
 class FakePortfolio:
+    def __init__(self, enabled: bool = True) -> None:
+        self.enabled = enabled
+
     def is_live_enabled(self, wallet_id: str) -> bool:
-        return True
+        return self.enabled
 
 
-def _position(symbol: str = "BTC", side: str = "Buy", size: float = 1.0) -> dict:
+def _position(
+    symbol: str = "BTC",
+    side: str = "Buy",
+    size: float = 1.0,
+    position_id: str = "pos-1",
+) -> dict:
     return {
+        "id": position_id,
         "symbol": symbol,
         "side": side,
         "size": size,
@@ -120,6 +129,30 @@ def test_reconciliation_alerts_only_when_divergence_set_changes():
     assert len(alerts.messages) == 1
 
 
+def test_reconciliation_aggregates_multiple_local_positions_by_symbol():
+    local = [
+        _position(size=0.6, position_id="pos-long-a"),
+        _position(size=0.4, position_id="pos-long-b"),
+    ]
+    store = FakeStore(local)
+    service = ReconciliationService(
+        client=FakeClient(_state(("BTC", 0.5, 100.0))),
+        store=store,
+        wallet_store=FakeWallets(),
+        portfolio_store=FakePortfolio(),
+        alert_engine=FakeAlerts(),
+    )
+
+    result = service.reconcile("wallet-1")
+
+    size_divergence = next(
+        item for item in result["divergences"] if item["type"] == "size_mismatch"
+    )
+    assert size_divergence["localSize"] == 1.0
+    assert size_divergence["exchangeSize"] == 0.5
+    assert size_divergence["localPositionIds"] == ["pos-long-a", "pos-long-b"]
+
+
 def test_size_tolerance_has_relative_and_absolute_floor():
     assert _size_matches(1.001, 1.0)
     assert not _size_matches(1.002, 1.0)
@@ -145,3 +178,19 @@ def test_reconciliation_api_failure_is_unavailable():
     assert result["status"] == "unavailable"
     assert result["error"] == "exchange unavailable"
     assert store.saved[-1]["status"] == "unavailable"
+
+
+def test_reconciliation_for_paper_wallet_is_not_applicable():
+    store = FakeStore([])
+    service = ReconciliationService(
+        client=FakeClient({}),
+        store=store,
+        wallet_store=FakeWallets(),
+        portfolio_store=FakePortfolio(enabled=False),
+        alert_engine=FakeAlerts(),
+    )
+
+    result = service.reconcile("wallet-1")
+
+    assert result["status"] == "not_applicable"
+    assert "not enabled" in result["error"]

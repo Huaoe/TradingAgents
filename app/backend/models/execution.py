@@ -63,5 +63,6 @@ class PositionRecord(BaseModel):
     margin: float
     status: str
     mode: Literal["paper", "live"] = "paper"
+    pnlSource: Literal["exchange", "mark_price"] = "mark_price"
     openedAt: str
     closedAt: str | None

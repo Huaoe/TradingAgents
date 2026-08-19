@@ -202,6 +202,7 @@ def isolated_stores(monkeypatch, tmp_path):
     monkeypatch.setattr(alert_store, "DB_PATH", str(data_dir / "alerts.db"))
     monkeypatch.setattr(portfolio_engine, "DB_PATH", str(data_dir / "portfolio.db"))
     monkeypatch.setattr(llm_usage_store, "DB_PATH", str(data_dir / "llm_usage.db"))
+    monkeypatch.setattr(strategy_store, "DB_PATH", str(data_dir / "strategies.db"))
 
     # Reset singletons so the new DB paths are picked up.
     wallet_store.WalletStore._instance = None

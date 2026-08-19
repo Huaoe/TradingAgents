@@ -29,8 +29,7 @@ def _exchange_positions(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
             continue
         positions[coin] = {
             "symbol": coin,
-            "side": "Buy" if size > 0 else "Sell",
-            "size": abs(size),
+            "signedSize": size,
             "entryPrice": float(position.get("entryPx") or 0.0),
         }
     return positions
@@ -74,6 +73,7 @@ class ReconciliationService:
             self.store.save_reconciliation(result)
             return result
         if not self.portfolio_store.is_live_enabled(wallet_id):
+            result["status"] = "not_applicable"
             result["error"] = f"Live trading is not enabled for wallet {wallet_id}"
             self.store.save_reconciliation(result)
             return result
@@ -81,11 +81,38 @@ class ReconciliationService:
         try:
             state = self.client.get_clearinghouse_state(wallet.address, force=True)
             exchange = _exchange_positions(state)
-            local = {
-                position["symbol"].upper(): position
-                for position in self.store.list_open_positions(wallet_id)
-                if position.get("mode", "paper") == "live"
-            }
+            local: dict[str, dict[str, Any]] = {}
+            for position in self.store.list_open_positions(wallet_id):
+                if position.get("mode", "paper") != "live":
+                    continue
+                symbol = position["symbol"].upper()
+                signed_size = (
+                    float(position["size"])
+                    if position["side"] in {"Buy", "LONG"}
+                    else -float(position["size"])
+                )
+                aggregate = local.setdefault(
+                    symbol,
+                    {
+                        "symbol": symbol,
+                        "signedSize": 0.0,
+                        "entryNotional": 0.0,
+                        "entrySize": 0.0,
+                        "positionIds": [],
+                    },
+                )
+                aggregate["signedSize"] += signed_size
+                aggregate["entryNotional"] += abs(float(position["size"])) * float(
+                    position["entryPrice"]
+                )
+                aggregate["entrySize"] += abs(float(position["size"]))
+                aggregate["positionIds"].append(position["id"])
+            for aggregate in local.values():
+                aggregate["entryPrice"] = (
+                    aggregate["entryNotional"] / aggregate["entrySize"]
+                    if aggregate["entrySize"]
+                    else 0.0
+                )
             divergences = self._compare(local, exchange)
             result["divergences"] = divergences
             result["status"] = "diverged" if divergences else "ok"
@@ -104,33 +131,48 @@ class ReconciliationService:
         divergences: list[dict[str, Any]] = []
         for symbol, position in local.items():
             remote = exchange.get(symbol)
+            local_size = float(position["signedSize"])
+            local_side = "Buy" if local_size > 0 else "Sell" if local_size < 0 else None
+            local_ids = position["positionIds"]
             if remote is None:
+                if local_side is None:
+                    continue
                 divergences.append(
                     {
                         "type": "missing_on_exchange",
                         "severity": "error",
                         "symbol": symbol,
+                        "localPositionIds": local_ids,
+                        "localSize": local_size,
                         "message": f"Local live position {symbol} is missing on the exchange.",
                     }
                 )
                 continue
-            if position["side"] != remote["side"]:
+            exchange_size = float(remote["signedSize"])
+            exchange_side = (
+                "Buy" if exchange_size > 0 else "Sell" if exchange_size < 0 else None
+            )
+            if local_side != exchange_side:
                 divergences.append(
                     {
                         "type": "side_mismatch",
                         "severity": "error",
                         "symbol": symbol,
-                        "message": f"Local {position['side']} position conflicts with exchange {remote['side']}.",
+                        "localPositionIds": local_ids,
+                        "localSide": local_side,
+                        "exchangeSide": exchange_side,
+                        "message": f"Local {local_side} position conflicts with exchange {exchange_side}.",
                     }
                 )
-            if not _size_matches(float(position["size"]), float(remote["size"])):
+            if not _size_matches(abs(local_size), abs(exchange_size)):
                 divergences.append(
                     {
                         "type": "size_mismatch",
                         "severity": "warning",
                         "symbol": symbol,
-                        "localSize": float(position["size"]),
-                        "exchangeSize": float(remote["size"]),
+                        "localPositionIds": local_ids,
+                        "localSize": local_size,
+                        "exchangeSize": exchange_size,
                         "message": f"Local and exchange sizes differ for {symbol}.",
                     }
                 )
@@ -142,6 +184,7 @@ class ReconciliationService:
                         "type": "entry_price_drift",
                         "severity": "warning",
                         "symbol": symbol,
+                        "localPositionIds": local_ids,
                         "localEntryPrice": local_entry,
                         "exchangeEntryPrice": remote_entry,
                         "message": f"Local and exchange entry prices drift for {symbol}.",

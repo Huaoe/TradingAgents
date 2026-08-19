@@ -113,7 +113,14 @@ def test_live_close_uses_exchange_fills_and_funding(monkeypatch, isolated_stores
             }
 
     mock_hyperliquid_client.fills = [
-        {"oid": 2, "px": "110", "sz": "1", "fee": "0.6", "closedPnl": "10"},
+        {
+            "oid": 2,
+            "px": "110",
+            "sz": "1",
+            "fee": "0.6",
+            "builderFee": "0.1",
+            "closedPnl": "10",
+        },
     ]
     mock_hyperliquid_client.user_funding = [{"coin": "BTC", "usdc": "-0.4"}]
     engine = ExecutionEngine()
@@ -140,9 +147,11 @@ def test_live_close_uses_exchange_fills_and_funding(monkeypatch, isolated_stores
         master_password="password",
     )
 
-    assert result["netPnl"] == pytest.approx(8.5)
+    assert result["netPnl"] == pytest.approx(8.4)
     assert order["meta"]["costSource"] == "exchange_fills"
+    assert order["meta"]["actualFee"] == pytest.approx(1.2)
     assert order["meta"]["fundingPaid"] == pytest.approx(0.4)
+    assert order["meta"]["netPnlBasis"] == "exchangeClosedPnl - fees - funding"
 
 
 def test_live_unrealized_pnl_uses_exchange_position(mock_hyperliquid_client):
@@ -175,3 +184,4 @@ def test_live_unrealized_pnl_uses_exchange_position(mock_hyperliquid_client):
 
     assert position["markPrice"] == pytest.approx(105.0)
     assert position["pnl"] == pytest.approx(5.25)
+    assert position["pnlSource"] == "exchange"
