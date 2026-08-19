@@ -29,29 +29,28 @@ interface HoveredBar {
   high: number;
   low: number;
   close: number;
+  events: TradeEvent[];
+}
+
+interface TradeEvent {
+  kind: 'entry' | 'exit';
+  trade: BacktestTrade;
 }
 
 function toTimestamp(time: string): UTCTimestamp {
   return Math.floor(new Date(time).getTime() / 1000) as UTCTimestamp;
 }
 
-function exitLabel(reason: BacktestTrade['exitReason']) {
-  switch (reason) {
-    case 'stop_loss':
-      return 'SL';
-    case 'take_profit':
-      return 'TP';
-    case 'trailing_stop':
-      return 'Trail';
-    case 'end_of_backtest':
-      return 'End';
-    default:
-      return 'Signal';
-  }
+function formatExitReason(reason: BacktestTrade['exitReason']) {
+  return reason.replaceAll('_', ' ');
 }
 
 function formatPrice(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatPnl(value: number) {
+  return `${value >= 0 ? '+' : ''}${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
 
 export function CandlestickChart({ price, trades }: CandlestickChartProps) {
@@ -70,7 +69,7 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
       width: container.clientWidth || 1,
       height: container.clientHeight || 1,
       layout: {
-        background: { type: ColorType.Solid, color: '#11131a' },
+        background: { type: ColorType.Solid, color: '#111827' },
         textColor: '#9ca3af',
       },
       grid: {
@@ -129,6 +128,12 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
 
     const validTimes = new Set(candleData.map((bar) => bar.time));
     const markers: SeriesMarker<Time>[] = [];
+    const eventsByTime = new Map<number, TradeEvent[]>();
+    const addEvent = (time: UTCTimestamp, event: TradeEvent) => {
+      const events = eventsByTime.get(time) ?? [];
+      events.push(event);
+      eventsByTime.set(time, events);
+    };
     for (const trade of trades) {
       const entryTime = toTimestamp(trade.entryTime);
       if (validTimes.has(entryTime)) {
@@ -138,8 +143,9 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
           position: isLong ? 'belowBar' : 'aboveBar',
           shape: isLong ? 'arrowUp' : 'arrowDown',
           color: isLong ? '#10b981' : '#ef4444',
-          text: isLong ? 'Long entry' : 'Short entry',
+          size: 1,
         });
+        addEvent(entryTime, { kind: 'entry', trade });
       }
 
       const exitTime = toTimestamp(trade.exitTime);
@@ -149,10 +155,11 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
         markers.push({
           time: exitTime,
           position: isLong ? 'aboveBar' : 'belowBar',
-          shape: isSignalExit ? (isLong ? 'arrowDown' : 'arrowUp') : 'square',
+          shape: isSignalExit ? 'circle' : 'square',
           color: isSignalExit ? '#f59e0b' : '#f97316',
-          text: exitLabel(trade.exitReason),
+          size: 1,
         });
+        addEvent(exitTime, { kind: 'exit', trade });
       }
     }
     markers.sort((a, b) => Number(a.time) - Number(b.time));
@@ -180,6 +187,7 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
         high: data.high,
         low: data.low,
         close: data.close,
+        events: eventsByTime.get(param.time) ?? [],
       });
     };
     chart.subscribeCrosshairMove(handleCrosshairMove);
@@ -206,12 +214,19 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
   }
 
   return (
-    <div className="relative h-full min-h-0 w-full">
+    <div className="relative flex h-full min-h-0 w-full flex-col">
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
+        <span className="text-gray-400">Markers:</span>
+        <span className="text-emerald-400">▲ long entry</span>
+        <span className="text-rose-400">▼ short entry</span>
+        <span className="text-amber-400">● signal exit</span>
+        <span className="text-orange-400">■ protective exit</span>
+      </div>
       {!price.length ? (
-        <div className="flex h-full items-center justify-center text-sm text-gray-500">No price data available.</div>
+        <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-gray-500">No price data available.</div>
       ) : (
         <>
-          <div ref={containerRef} className="h-full w-full" />
+          <div ref={containerRef} className="min-h-0 flex-1 w-full" />
           <button
             type="button"
             onClick={resetView}
@@ -237,6 +252,19 @@ export function CandlestickChart({ price, trades }: CandlestickChartProps) {
                   C <strong className="text-gray-100">{formatPrice(hoveredBar.close)}</strong>
                 </span>
               </div>
+              {hoveredBar.events.length > 0 && (
+                <div className="mt-2 space-y-1 border-t border-gray-700 pt-2">
+                  {hoveredBar.events.map((event, index) => (
+                    <div key={`${event.kind}-${event.trade.entryTime}-${index}`} className="flex flex-wrap gap-x-2">
+                      <span className={event.kind === 'entry' ? 'text-gray-200' : 'text-amber-300'}>
+                        {event.trade.side} {event.kind}
+                      </span>
+                      {event.kind === 'exit' && <span>· {formatExitReason(event.trade.exitReason)}</span>}
+                      <span>· net PnL {formatPnl(event.trade.netPnl)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </>

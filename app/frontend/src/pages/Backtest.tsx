@@ -733,7 +733,7 @@ export function Backtest() {
           </Card>
 
           <Card title="Price + Buy / Sell Signals">
-            <div className="h-72">
+            <div className="h-96">
               <CandlestickChart price={result.price} trades={result.trades} />
             </div>
           </Card>
