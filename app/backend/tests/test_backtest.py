@@ -344,21 +344,49 @@ def test_trailing_stop_uses_prior_bar_extreme(monkeypatch, mock_hyperliquid_clie
     assert trade["exitPrice"] == 95.0
 
 
-def test_funding_scales_with_bar_duration(monkeypatch, mock_hyperliquid_client):
+def test_funding_uses_hourly_events_and_current_notional(monkeypatch, mock_hyperliquid_client):
     start_ms = 1_704_067_200_000
     result = _scripted_backtest(
         monkeypatch,
         mock_hyperliquid_client,
-        [1, 1],
-        [100.0, 100.0],
+        [1, 1, 1, 1, 1, 0],
+        [100.0, 100.0, 100.0, 100.0, 104.0, 104.0],
         interval="15m",
-        funding=[{"time": start_ms, "fundingRate": 0.01, "premium": 0.0}],
+        funding=[
+            {
+                "time": start_ms + 60 * 60_000,
+                "fundingRate": 0.01,
+                "premium": 0.0,
+            }
+        ],
         maker_fee=0.0,
         taker_fee=0.0,
         slippage_pct=0.0,
     )
 
-    assert result["trades"][0]["fundingCost"] == 25.0
+    assert result["trades"][0]["fundingCost"] == 104.0
+
+
+def test_funding_rate_is_clamped_per_hour(monkeypatch, mock_hyperliquid_client):
+    start_ms = 1_704_067_200_000
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1, 0],
+        [100.0, 100.0, 100.0],
+        funding=[
+            {
+                "time": start_ms + 60 * 60_000,
+                "fundingRate": 0.5,
+                "premium": 0.0,
+            }
+        ],
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    assert result["trades"][0]["fundingCost"] == 400.0
 
 
 def test_merge_funding_does_not_backfill_leading_gaps():
@@ -370,6 +398,25 @@ def test_merge_funding_does_not_backfill_leading_gaps():
     )
 
     assert merged["fundingRate"].tolist() == [0.0, 0.01]
+
+
+def test_merge_funding_groups_hourly_events_inside_long_bars():
+    start = pd.Timestamp("2024-01-01T00:00:00Z")
+    df = pd.DataFrame(index=[start, start + pd.Timedelta(hours=4)])
+    merged = _merge_funding(
+        df,
+        [
+            {"time": int((start + pd.Timedelta(hours=1)).timestamp() * 1000), "fundingRate": 0.01},
+            {"time": int((start + pd.Timedelta(hours=3)).timestamp() * 1000), "fundingRate": 0.02},
+            {
+                "time": int((start + pd.Timedelta(hours=5)).timestamp() * 1000),
+                "fundingRate": 0.03,
+            },
+        ],
+    )
+
+    assert merged["fundingEvents"].iloc[0] == [0.01, 0.02]
+    assert merged["fundingEvents"].iloc[1] == [0.03]
 
 
 def test_merge_funding_extremes_use_only_prior_bars():

@@ -55,19 +55,6 @@ def _annualization_factor(interval: str) -> float:
     return mapping.get(interval, 365 * 24)
 
 
-def _interval_hours(interval: str) -> float:
-    """Return the duration represented by one bar."""
-    mapping = {
-        "1m": 1 / 60,
-        "5m": 5 / 60,
-        "15m": 15 / 60,
-        "1h": 1.0,
-        "4h": 4.0,
-        "1d": 24.0,
-    }
-    return mapping.get(interval, 1.0)
-
-
 def _sharpe_ratio(equity_values: list[float], interval: str) -> float:
     """Annualised Sharpe ratio from the equity curve.
 
@@ -127,6 +114,7 @@ def _merge_funding(
     funding_history: list[dict[str, Any]],
 ) -> pd.DataFrame:
     df["fundingRate"] = 0.0
+    df["fundingEvents"] = [[] for _ in range(len(df))]
     df["fundingMedian168"] = float("nan")
     df["fundingStd168"] = float("nan")
     if not funding_history:
@@ -139,6 +127,11 @@ def _merge_funding(
     if "fundingRate" not in ff.columns:
         return df
     ff = ff[["fundingRate"]].astype(float)
+    events = ff["fundingRate"].copy()
+    for timestamp, rate in events.items():
+        bar_index = int(df.index.searchsorted(timestamp, side="right") - 1)
+        if 0 <= bar_index < len(df):
+            df.iloc[bar_index, df.columns.get_loc("fundingEvents")].append(float(rate))
     # Reindex to include all candle timestamps and forward-fill only. Leading
     # gaps stay empty and are treated as zero funding by the caller.
     combined_index = df.index.union(ff.index)
@@ -240,10 +233,12 @@ def run_backtest(
     end_at: str,
     strategy: dict[str, Any] | None = None,
     initial_balance: float = 10_000.0,
-    maker_fee: float = 0.0002,
+    maker_fee: float = 0.00015,
     taker_fee: float = 0.00045,
-    slippage_pct: float = 0.0005,
+    slippage_pct: float = 0.00005,
     order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
 ) -> dict[str, Any]:
     """Run a bar-by-bar backtest and return a dict compatible with ``BacktestResult``."""
     strategy = _load_strategy(strategy or {})
@@ -435,9 +430,10 @@ def run_backtest(
 
         # Funding cost for holding the position through this bar.
         if position != 0 and entry_notional:
-            funding_cost = float(
-                position * entry_notional * row.get("fundingRate", 0.0) * _interval_hours(interval)
-            )
+            funding_cost = 0.0
+            for hourly_rate in row.get("fundingEvents", []):
+                rate = max(-0.04, min(0.04, _safe_float(hourly_rate)))
+                funding_cost += position * position_size_coin * price * rate
             cash = float(cash - funding_cost)
             cumulative_funding = float(cumulative_funding + funding_cost)
 
@@ -622,6 +618,9 @@ def run_backtest(
         "takerFee": _fmt(taker_fee, 6),
         "slippagePct": _fmt(slippage_pct, 6),
         "orderType": order_type,
+        "feeSource": fee_source,
+        "slippageSource": slippage_source,
+        "makerAssumption": "assumes fills; no queue modelling",
         "totalGrossPnl": _fmt(sum(t["grossPnl"] for t in trades)),
         "totalFees": _fmt(sum(t["fees"] for t in trades)),
         "totalFundingCost": _fmt(sum(t["fundingCost"] for t in trades)),

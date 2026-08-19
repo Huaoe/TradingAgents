@@ -116,6 +116,42 @@ export async function runBacktest(input: BacktestInput): Promise<BacktestResult>
   });
 }
 
+export interface UserFees {
+  address: string;
+  userCrossRate: number;
+  userAddRate: number;
+  userSpotCrossRate: number;
+  userSpotAddRate: number;
+  makerFee: number;
+  takerFee: number;
+  spotMakerFee: number;
+  spotTakerFee: number;
+  activeReferralDiscount: unknown;
+  activeStakingDiscount: unknown;
+  feeSchedule: unknown;
+}
+
+export async function fetchUserFees(address: string): Promise<UserFees> {
+  return api<UserFees>(`/api/fees/${encodeURIComponent(address)}`);
+}
+
+export interface SlippageEstimate {
+  symbol: string;
+  notional: number;
+  slippagePct: number;
+  slippageBps: number;
+  source: 'live_book';
+}
+
+export async function fetchSlippageEstimate(
+  symbol: string,
+  notional: number,
+): Promise<SlippageEstimate> {
+  return api<SlippageEstimate>(
+    `/api/slippage-estimate/${encodeURIComponent(symbol)}?notional=${encodeURIComponent(notional)}`,
+  );
+}
+
 export interface SignalCreateInput {
   symbol: string;
   strategyId?: string;

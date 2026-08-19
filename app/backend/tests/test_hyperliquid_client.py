@@ -32,6 +32,23 @@ class _StuckFundingInfo:
         return [{"time": start_ms, "coin": symbol, "fundingRate": "0.01", "premium": "0"}]
 
 
+class _UserFeesInfo:
+    def __init__(self):
+        self.calls = 0
+
+    def user_fees(self, address):
+        self.calls += 1
+        return {
+            "userCrossRate": "0.0004",
+            "userAddRate": "0.0001",
+            "userSpotCrossRate": "0.0003",
+            "userSpotAddRate": "0.0002",
+            "activeReferralDiscount": "0.1",
+            "activeStakingDiscount": "0.2",
+            "feeSchedule": {"tiers": [{"maker": "0.0001"}]},
+        }
+
+
 def test_funding_history_pages_past_api_limit(monkeypatch):
     client = object.__new__(HyperliquidClient)
     info = _FundingInfo()
@@ -75,3 +92,19 @@ def test_funding_history_has_a_page_limit():
     client.get_funding_history("BTC", start_ms=0, end_ms=100)
 
     assert info.calls == 3
+
+
+def test_user_fees_are_keyed_and_cached():
+    client = object.__new__(HyperliquidClient)
+    info = _UserFeesInfo()
+    client._info = info
+    first = client.get_user_fees("0xABC")
+    second = client.get_user_fees("0xabc")
+
+    assert first["makerFee"] == 0.0001
+    assert first["takerFee"] == 0.0004
+    assert first["userAddRate"] == 0.0001
+    assert first["userCrossRate"] == 0.0004
+    assert first["feeSchedule"]["tiers"]
+    assert second == first
+    assert info.calls == 1

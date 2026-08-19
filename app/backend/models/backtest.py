@@ -18,10 +18,12 @@ class BacktestRequest(BaseModel):
     strategyId: str | None = None
     strategy: dict[str, Any] | None = None
     initialBalance: float = 10_000.0
-    makerFee: float = 0.0002
+    makerFee: float = 0.00015
     takerFee: float = 0.00045
-    slippagePct: float = 0.0005
+    slippagePct: float = 0.00005
     orderType: Literal["maker", "taker"] = "taker"
+    feeSource: Literal["generic_default", "wallet", "manual"] = "generic_default"
+    slippageSource: Literal["default", "live_book"] = "default"
 
 
 class TradeRecord(BaseModel):
@@ -76,10 +78,13 @@ class BacktestSummary(BaseModel):
     interval: str
     symbol: str
     strategyName: str = ""
-    makerFee: float = 0.0002
+    makerFee: float = 0.00015
     takerFee: float = 0.00045
-    slippagePct: float = 0.0005
+    slippagePct: float = 0.00005
     orderType: Literal["maker", "taker"] = "taker"
+    feeSource: Literal["generic_default", "wallet", "manual"] = "generic_default"
+    slippageSource: Literal["default", "live_book"] = "default"
+    makerAssumption: str = "assumes fills; no queue modelling"
     totalGrossPnl: float = 0.0
     totalFees: float = 0.0
     totalFundingCost: float = 0.0

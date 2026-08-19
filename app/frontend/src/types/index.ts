@@ -178,6 +178,9 @@ export interface BacktestSummary {
   takerFee: number;
   slippagePct: number;
   orderType: 'maker' | 'taker';
+  feeSource: 'generic_default' | 'wallet' | 'manual';
+  slippageSource: 'default' | 'live_book';
+  makerAssumption: string;
   totalGrossPnl: number;
   totalFees: number;
   totalFundingCost: number;
@@ -225,6 +228,8 @@ export interface BacktestInput {
   takerFee?: number;
   slippagePct?: number;
   orderType?: 'maker' | 'taker';
+  feeSource?: 'generic_default' | 'wallet' | 'manual';
+  slippageSource?: 'default' | 'live_book';
 }
 
 export interface Wallet {

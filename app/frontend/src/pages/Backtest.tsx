@@ -14,7 +14,14 @@ import {
 import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Card } from '../components/Card';
-import { fetchStrategies, runBacktest, updateStrategy } from '../services/api';
+import {
+  fetchSlippageEstimate,
+  fetchStrategies,
+  fetchUserFees,
+  runBacktest,
+  updateStrategy,
+} from '../services/api';
+import { useWallet } from '../context/useWallet';
 import type { Strategy, BacktestResult, BacktestInterval } from '../types';
 
 const intervals: { label: string; value: BacktestInterval }[] = [
@@ -48,7 +55,7 @@ const STAT_HINTS: Record<string, string> = {
   'Sharpe Ratio': 'Risk-adjusted return; higher is better.',
   'Max Drawdown': 'Largest peak-to-trough decline in equity.',
   'Win Rate': 'Percentage of trades that closed with a positive net PnL.',
-  'Profit Factor': 'Gross profit divided by gross loss.',
+  'Profit Factor': 'Net profit divided by net loss after fees and funding.',
   '# Trades': 'Total number of round-trip trades executed.',
   'Final Balance': 'Account value at the end of the backtest.',
   'Avg Win': 'Average return percent of winning trades.',
@@ -215,15 +222,21 @@ export function Backtest() {
   const [startAt, setStartAt] = useState(toInputDate(start));
   const [endAt, setEndAt] = useState(toInputDate(end));
   const [initialBalance, setInitialBalance] = useState(10000);
-  const [makerFee, setMakerFee] = useState(0.0002);
+  const [makerFee, setMakerFee] = useState(0.00015);
   const [takerFee, setTakerFee] = useState(0.00045);
-  const [slippagePct, setSlippagePct] = useState(0.0005);
+  const [slippagePct, setSlippagePct] = useState(0.00005);
   const [orderType, setOrderType] = useState<'maker' | 'taker'>('taker');
+  const [feeSource, setFeeSource] = useState<'generic_default' | 'wallet' | 'manual'>(
+    'generic_default',
+  );
+  const [slippageSource, setSlippageSource] = useState<'default' | 'live_book'>('default');
+  const [estimatingSlippage, setEstimatingSlippage] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [activated, setActivated] = useState(false);
+  const { selectedWallet } = useWallet();
 
   useEffect(() => {
     fetchStrategies().then((list) => {
@@ -237,6 +250,34 @@ export function Backtest() {
       }
     }).catch(() => setStrategies([]));
   }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedWallet) {
+      setMakerFee(0.00015);
+      setTakerFee(0.00045);
+      setFeeSource('generic_default');
+      return () => {
+        active = false;
+      };
+    }
+    fetchUserFees(selectedWallet.address)
+      .then((fees) => {
+        if (!active) return;
+        setMakerFee(fees.makerFee);
+        setTakerFee(fees.takerFee);
+        setFeeSource('wallet');
+      })
+      .catch(() => {
+        if (!active) return;
+        setMakerFee(0.00015);
+        setTakerFee(0.00045);
+        setFeeSource('generic_default');
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedWallet]);
 
   async function handleRun(e: React.FormEvent) {
     e.preventDefault();
@@ -256,12 +297,31 @@ export function Backtest() {
         takerFee,
         slippagePct,
         orderType,
+        feeSource,
+        slippageSource,
       });
       setResult(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Backtest failed');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleEstimateSlippage() {
+    const selected = strategies.find((strategy) => strategy.id === strategyId);
+    const allocation = selected?.riskConfig?.allocation ?? 0.10;
+    const leverage = selected?.riskConfig?.leverage ?? 3;
+    const notional = initialBalance * allocation * leverage;
+    setEstimatingSlippage(true);
+    try {
+      const estimate = await fetchSlippageEstimate(symbol.toUpperCase(), notional);
+      setSlippagePct(estimate.slippagePct);
+      setSlippageSource('live_book');
+    } catch {
+      setError('Live-book slippage estimate unavailable; keeping the current value.');
+    } finally {
+      setEstimatingSlippage(false);
     }
   }
 
@@ -400,22 +460,32 @@ export function Backtest() {
           {showAdvanced && (
             <>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-400">Maker Fee</label>
+                <label className="text-xs font-medium text-gray-400">
+                  Maker Fee {feeSource === 'wallet' ? '(wallet tier)' : '(default/manual)'}
+                </label>
                 <input
                   type="number"
                   step="0.00001"
                   value={makerFee}
-                  onChange={(e) => setMakerFee(Number(e.target.value))}
+                  onChange={(e) => {
+                    setMakerFee(Number(e.target.value));
+                    setFeeSource('manual');
+                  }}
                   className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-400">Taker Fee</label>
+                <label className="text-xs font-medium text-gray-400">
+                  Taker Fee {feeSource === 'wallet' ? '(wallet tier)' : '(default/manual)'}
+                </label>
                 <input
                   type="number"
                   step="0.00001"
                   value={takerFee}
-                  onChange={(e) => setTakerFee(Number(e.target.value))}
+                  onChange={(e) => {
+                    setTakerFee(Number(e.target.value));
+                    setFeeSource('manual');
+                  }}
                   className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
                 />
               </div>
@@ -432,13 +502,26 @@ export function Backtest() {
               </div>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-gray-400">Slippage %</label>
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={slippagePct}
-                  onChange={(e) => setSlippagePct(Number(e.target.value))}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.00001"
+                    value={slippagePct}
+                    onChange={(e) => {
+                      setSlippagePct(Number(e.target.value));
+                      setSlippageSource('default');
+                    }}
+                    className="min-w-0 flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleEstimateSlippage}
+                    disabled={estimatingSlippage}
+                    className="whitespace-nowrap rounded-lg border border-gray-700 px-2 text-xs text-violet-300 hover:border-violet-500 disabled:opacity-60"
+                  >
+                    {estimatingSlippage ? 'Estimating…' : 'Estimate live book'}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -655,6 +738,13 @@ export function Backtest() {
                 <div className="text-gray-300">
                   {stats.orderType} · fee {(stats.orderType === 'maker' ? stats.makerFee : stats.takerFee) * 10000} bps
                   {stats.orderType === 'taker' ? ` + ${stats.slippagePct * 10000} bps slip` : ''}
+                  {stats.feeSource === 'wallet'
+                    ? ' · wallet tier'
+                    : stats.feeSource === 'manual'
+                      ? ' · manual override'
+                      : ' · generic default'}
+                  {stats.slippageSource === 'live_book' ? ' · live-book estimate' : ''}
+                  {stats.orderType === 'maker' ? ' · assumes fills, no queue modelling' : ''}
                 </div>
               </div>
             </div>

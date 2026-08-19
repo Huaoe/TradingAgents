@@ -18,6 +18,8 @@ class HyperliquidClient:
     _universe_cache_expiry: dict[str, float] = {}
     _market_cache: dict[str, dict[str, Any]] = {}
     _market_cache_expiry: dict[str, float] = {}
+    _user_fee_cache: dict[str, dict[str, Any]] = {}
+    _user_fee_cache_expiry: dict[str, float] = {}
     _cache_ttl_seconds = 10.0
     _max_funding_pages = 1_000
 
@@ -232,6 +234,63 @@ class HyperliquidClient:
             "spreadPct": self._spread_pct(bids_top, asks_top),
             "imbalance": self._imbalance(bids_top, asks_top),
         }
+
+    def get_user_fees(self, address: str) -> dict[str, Any]:
+        key = address.lower()
+        now = time.monotonic()
+        if self._user_fee_cache_expiry.get(key, 0.0) > now:
+            return self._user_fee_cache[key]
+        raw = self.info.user_fees(address)
+        result = {
+            "address": address,
+            "userCrossRate": float(raw.get("userCrossRate", 0.00045)),
+            "userAddRate": float(raw.get("userAddRate", 0.00015)),
+            "userSpotCrossRate": float(raw.get("userSpotCrossRate", 0.00045)),
+            "userSpotAddRate": float(raw.get("userSpotAddRate", 0.00015)),
+            "makerFee": float(raw.get("userAddRate", 0.00015)),
+            "takerFee": float(raw.get("userCrossRate", 0.00045)),
+            "spotMakerFee": float(raw.get("userSpotAddRate", 0.00015)),
+            "spotTakerFee": float(raw.get("userSpotCrossRate", 0.00045)),
+            "activeReferralDiscount": raw.get("activeReferralDiscount"),
+            "activeStakingDiscount": raw.get("activeStakingDiscount"),
+            "feeSchedule": raw.get("feeSchedule"),
+        }
+        self._user_fee_cache[key] = result
+        self._user_fee_cache_expiry[key] = now + self._cache_ttl_seconds
+        return result
+
+    def estimate_slippage(self, symbol: str, notional: float) -> float:
+        if notional <= 0:
+            return 0.0
+        raw = self.info.l2_snapshot(symbol)
+        bids = raw["levels"][0]
+        asks = raw["levels"][1]
+        if not bids or not asks:
+            raise ValueError(f"Order book for {symbol} is empty")
+        best_bid = float(bids[0]["px"])
+        best_ask = float(asks[0]["px"])
+        mid = (best_bid + best_ask) / 2
+
+        def average_fill(levels: list[dict[str, Any]]) -> float:
+            remaining = float(notional)
+            filled_notional = 0.0
+            filled_coins = 0.0
+            for level in levels:
+                price = float(level["px"])
+                available_notional = price * float(level["sz"])
+                take_notional = min(remaining, available_notional)
+                filled_notional += take_notional
+                filled_coins += take_notional / price
+                remaining -= take_notional
+                if remaining <= 1e-9:
+                    break
+            if remaining > 1e-9 or filled_coins <= 0:
+                raise ValueError(f"Order book depth is insufficient for ${notional:,.2f}")
+            return filled_notional / filled_coins
+
+        buy_cost = (average_fill(asks) - mid) / mid
+        sell_cost = (mid - average_fill(bids)) / mid
+        return max(0.0, float((buy_cost + sell_cost) / 2))
 
     @staticmethod
     def _spread_pct(bids: list[dict], asks: list[dict]) -> float | None:
