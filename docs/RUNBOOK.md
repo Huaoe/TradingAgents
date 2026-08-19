@@ -46,6 +46,11 @@ Optional trading safety variables:
 ```bash
 # Disable live trading by default; only set to true when you intend real orders.
 LIVE_TRADING=false
+
+# Select the network used consistently for market data and order execution.
+# The default is mainnet for complete market data; live orders remain gated below.
+# Set this to testnet to use testnet for both data and execution.
+HYPERLIQUID_NETWORK=mainnet
 ```
 
 ## 3. Run in development
@@ -99,7 +104,20 @@ docker compose -f app/docker-compose.web.yml down
 ## 6. Important safety reminders
 
 - The app starts in **paper mode**. No real orders are sent.
-- Live trading requires `LIVE_TRADING=true` in the environment, a real wallet private key, and `mode=live` on the trade request.
+- Live trading requires all of the following: `LIVE_TRADING=true`, the wallet's
+  **live trading** switch enabled from the Portfolio UI/API, and `mode=live` on
+  the trade request. Both gates are checked for every live open and close; an
+  error identifies the gate that is off.
+- Market data and execution use the same `HYPERLIQUID_NETWORK` setting. The
+  backend defaults to `mainnet` for data, and the Dashboard displays the active
+  network. Set `HYPERLIQUID_NETWORK=testnet` to switch both data and execution
+  to testnet.
+- Before mainnet trading, fund the Hyperliquid mainnet account with USDC
+  bridged via Arbitrum. Execution supports an approved Hyperliquid API agent
+  wallet because it passes `account_address=wallet.address` to the SDK.
+- For live opens, the app updates the asset leverage on Hyperliquid immediately
+  before submitting the market order. The requested leverage is clamped to the
+  market's `maxLeverage`; a rejected leverage update aborts the order.
 - Never commit `.env`, wallet private keys, or `app/backend/data/*` to Git.
 - Test with small size for at least 7 days in paper mode before moving real capital.
 

@@ -9,6 +9,11 @@ from typing import Any
 import pandas as pd
 from hyperliquid.info import Info
 
+from backend.services.hyperliquid_config import (
+    get_hyperliquid_base_url,
+    get_hyperliquid_network,
+)
+
 
 class HyperliquidClient:
     """Singleton wrapper around the Hyperliquid ``Info`` client."""
@@ -24,10 +29,25 @@ class HyperliquidClient:
     _max_funding_pages = 1_000
 
     def __new__(cls) -> HyperliquidClient:
+        network = get_hyperliquid_network()
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._info = Info(skip_ws=True)
+            cls._instance._network = network
+            cls._instance._info = Info(base_url=get_hyperliquid_base_url(network), skip_ws=True)
+        elif cls._instance._network != network:
+            cls._instance._network = network
+            cls._instance._info = Info(base_url=get_hyperliquid_base_url(network), skip_ws=True)
+            cls._clear_caches()
         return cls._instance
+
+    @classmethod
+    def _clear_caches(cls) -> None:
+        cls._universe_cache.clear()
+        cls._universe_cache_expiry.clear()
+        cls._market_cache.clear()
+        cls._market_cache_expiry.clear()
+        cls._user_fee_cache.clear()
+        cls._user_fee_cache_expiry.clear()
 
     @classmethod
     def _cached_markets(
@@ -50,6 +70,10 @@ class HyperliquidClient:
     @property
     def info(self) -> Info:
         return self._info
+
+    @property
+    def network(self) -> str:
+        return self._network
 
     def get_perp_markets(self) -> list[dict[str, Any]]:
         def load() -> list[dict[str, Any]]:

@@ -10,15 +10,13 @@ from backend.models.wallet import Wallet
 from backend.services.alert_engine import AlertEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.hyperliquid_config import get_hyperliquid_base_url
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_store import SignalStore
 from backend.services.wallet_store import WalletStore
 
 # Hyperliquid taker fee at base tier.
 TAKER_FEE = 0.00045
-
-# Live trading is disabled unless explicitly enabled via environment variable.
-LIVE_TRADING_ENABLED = os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
 
 
 def _side_for_signal(action: str) -> str:
@@ -52,15 +50,32 @@ def _paper_fill(symbol: str, side: str) -> float:
     return round(float(price) * multiplier, 8)
 
 
-def _live_exchange(wallet: Wallet, private_key: str, testnet: bool = True):
+def _live_exchange(wallet: Wallet, private_key: str):
     """Build a Hyperliquid ``Exchange`` client from a decrypted private key."""
     import eth_account  # noqa: F401
     from hyperliquid.exchange import Exchange
-    from hyperliquid.utils import constants
 
     account = eth_account.Account.from_key(private_key)
-    base_url = constants.TESTNET_API_URL if testnet else constants.MAINNET_API_URL
-    return Exchange(account, base_url, account_address=wallet.address)
+    return Exchange(
+        account,
+        get_hyperliquid_base_url(),
+        account_address=wallet.address,
+    )
+
+
+def _live_trading_enabled() -> bool:
+    """Return whether the process-wide live-trading gate is enabled."""
+    return os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
+
+
+def _set_live_leverage(exchange: Any, symbol: str, leverage: int) -> None:
+    """Set leverage and reject the order if Hyperliquid declines the update."""
+    try:
+        result = exchange.update_leverage(leverage, symbol, is_cross=True)
+    except Exception as exc:
+        raise ValueError(f"Could not set {symbol} leverage to {leverage}x: {exc}") from exc
+    if not isinstance(result, dict) or result.get("status") != "ok":
+        raise ValueError(f"Could not set {symbol} leverage to {leverage}x: {result}")
 
 
 class ExecutionEngine:
@@ -80,7 +95,6 @@ class ExecutionEngine:
         wallet_id: str,
         mode: Literal["paper", "live"] = "paper",
         master_password: str | None = None,
-        testnet: bool = True,
     ) -> dict[str, Any]:
         signal = self.signal_store.get_signal(signal_id)
         if not signal:
@@ -92,6 +106,9 @@ class ExecutionEngine:
         if not wallet:
             raise ValueError(f"Wallet {wallet_id} not found")
 
+        if mode == "live":
+            self._require_live_gates(wallet_id)
+
         symbol = signal["symbol"]
         market = self.client.get_market(symbol)
         if not market:
@@ -100,12 +117,12 @@ class ExecutionEngine:
         side = _side_for_signal(signal["action"])
         size_usd = signal["size"] or 0.0
         leverage = signal.get("leverage") or 1
+        if mode == "live":
+            max_leverage = max(1, int(market.get("maxLeverage") or leverage))
+            leverage = min(int(leverage), max_leverage)
         entry = signal.get("entry") or market.get("price") or 0.0
         size_coin = size_usd / entry if entry else 0.0
         notional = size_usd
-
-        if mode == "live" and not LIVE_TRADING_ENABLED:
-            raise ValueError("Live trading is disabled. Set LIVE_TRADING=true to enable.")
 
         risk_config = signal.get("meta", {}).get("riskConfig") or {}
         try:
@@ -130,7 +147,8 @@ class ExecutionEngine:
             private_key = self.wallet_store.decrypt_private_key(wallet_id, master_password)
             if not private_key:
                 raise ValueError("Could not decrypt wallet private key (wrong password?)")
-            exchange = _live_exchange(wallet, private_key, testnet=testnet)
+            exchange = _live_exchange(wallet, private_key)
+            _set_live_leverage(exchange, symbol, leverage)
             is_buy = side == "Buy"
             result = exchange.market_open(symbol, is_buy, float(size_coin), None, 0.01)
             meta = {"live": True, "signal": signal, "exchangeResult": result}
@@ -204,7 +222,6 @@ class ExecutionEngine:
         wallet_id: str,
         mode: Literal["paper", "live"] = "paper",
         master_password: str | None = None,
-        testnet: bool = True,
     ) -> dict[str, Any]:
         position = self.store.get_position(position_id)
         if not position:
@@ -215,6 +232,9 @@ class ExecutionEngine:
         wallet = self.wallet_store.get_wallet(wallet_id)
         if not wallet:
             raise ValueError(f"Wallet {wallet_id} not found")
+
+        if mode == "live":
+            self._require_live_gates(wallet_id)
 
         symbol = position["symbol"]
         side = position["side"]
@@ -229,7 +249,7 @@ class ExecutionEngine:
             private_key = self.wallet_store.decrypt_private_key(wallet_id, master_password)
             if not private_key:
                 raise ValueError("Could not decrypt wallet private key")
-            exchange = _live_exchange(wallet, private_key, testnet=testnet)
+            exchange = _live_exchange(wallet, private_key)
             result = exchange.market_close(symbol, float(size_coin))
             exit_price = entry  # fallback
             if result.get("status") == "ok":
@@ -267,6 +287,15 @@ class ExecutionEngine:
         self.alert_engine.journal_closed_trade(position, order, net_pnl, gross, fees, wallet_id)
 
         return {"position": self._normalize_position_side(position), "netPnl": round(net_pnl, 4)}
+
+    def _require_live_gates(self, wallet_id: str) -> None:
+        if not _live_trading_enabled():
+            raise ValueError("Global live trading gate is off. Set LIVE_TRADING=true to enable.")
+        if not self.portfolio_engine.portfolio_store.is_live_enabled(wallet_id):
+            raise ValueError(
+                f"Wallet live trading gate is off for {wallet_id}. "
+                "Enable live trading for this wallet first."
+            )
 
     @staticmethod
     def _normalize_position_side(position: dict[str, Any]) -> dict[str, Any]:

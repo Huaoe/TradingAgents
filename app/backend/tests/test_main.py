@@ -18,6 +18,7 @@ async def test_health_with_httpx(app, mock_hyperliquid_client, isolated_stores):
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "ok"
+        assert body["network"] in {"mainnet", "testnet"}
         assert "time" in body
 
 
@@ -26,6 +27,7 @@ def test_health_and_metrics(test_client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
+    assert body["network"] in {"mainnet", "testnet"}
     assert "time" in body
 
     response = test_client.get("/api/metrics")
