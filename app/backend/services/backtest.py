@@ -226,32 +226,23 @@ def _compute_signals(df: pd.DataFrame, strategy: dict[str, Any]) -> pd.DataFrame
     return pd.DataFrame({"signal": signals, "confidence": confidences})
 
 
-def run_backtest(
+def load_backtest_frame(
     symbol: str,
     interval: str,
     start_at: str,
     end_at: str,
-    strategy: dict[str, Any] | None = None,
-    initial_balance: float = 10_000.0,
-    maker_fee: float = 0.00015,
-    taker_fee: float = 0.00045,
-    slippage_pct: float = 0.00005,
-    order_type: str = "taker",
-    fee_source: str = "generic_default",
-    slippage_source: str = "default",
-) -> dict[str, Any]:
-    """Run a bar-by-bar backtest and return a dict compatible with ``BacktestResult``."""
-    strategy = _load_strategy(strategy or {})
+    client: HyperliquidClient | None = None,
+) -> pd.DataFrame:
+    """Load and prepare the historical frame used by one or more simulations."""
     start_dt = _parse_iso(start_at)
     end_dt = _parse_iso(end_at)
     start_ms = int(start_dt.timestamp() * 1000)
     end_ms = int(end_dt.timestamp() * 1000)
 
-    client = HyperliquidClient()
+    client = client or HyperliquidClient()
     candles = client.get_candles(symbol, interval, start_ms, end_ms)
     if not candles:
         candles = _yfinance_candles(symbol, start_dt, end_dt, interval)
-
     if not candles:
         raise ValueError(f"No candle data for {symbol} in the selected range")
 
@@ -263,7 +254,34 @@ def run_backtest(
         funding = client.get_funding_history(symbol, start_ms=start_ms, end_ms=end_ms)
     except Exception:
         funding = []
-    df = _merge_funding(df, funding)
+    return _merge_funding(df, funding)
+
+
+def attach_signals(df: pd.DataFrame, strategy: dict[str, Any] | None = None) -> pd.DataFrame:
+    """Attach strategy signals while preserving the shared signal computation hook."""
+    frame = df.copy()
+    out = _compute_signals(frame, _load_strategy(strategy or {}))
+    frame["signal"] = out["signal"]
+    frame["confidence"] = out["confidence"]
+    return frame
+
+
+def _simulate_backtest(
+    df: pd.DataFrame,
+    symbol: str,
+    interval: str,
+    strategy: dict[str, Any] | None = None,
+    initial_balance: float = 10_000.0,
+    maker_fee: float = 0.00015,
+    taker_fee: float = 0.00045,
+    slippage_pct: float = 0.00005,
+    order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
+    max_leverage: int = 3,
+) -> dict[str, Any]:
+    """Simulate a prepared frame and return a dict compatible with ``BacktestResult``."""
+    strategy = _load_strategy(strategy or {})
 
     cfg = strategy.get("riskConfig") or {}
     leverage = max(1, int(_safe_float(cfg.get("leverage"), 3)))
@@ -279,13 +297,7 @@ def run_backtest(
     trailing_stop_pct = max(0.0, _safe_float(cfg.get("trailingStopPct"), 0.0))
     order_type = order_type if order_type in {"maker", "taker"} else "taker"
 
-    market = client.get_market(symbol) or {}
-    max_leverage = int(market.get("maxLeverage") or 3)
-    leverage = min(leverage, max_leverage)
-
-    out = _compute_signals(df, strategy)
-    df["signal"] = out["signal"]
-    df["confidence"] = out["confidence"]
+    leverage = min(leverage, max(1, int(max_leverage)))
 
     confidence_floor_value = int(_safe_float(cfg.get("confidenceFloor"), 60))
     final_signal = int(df["signal"].iloc[-1]) if not df.empty else 0
@@ -642,3 +654,39 @@ def run_backtest(
         "trades": trades,
         "monthlyReturns": monthly_returns,
     }
+
+
+def run_backtest(
+    symbol: str,
+    interval: str,
+    start_at: str,
+    end_at: str,
+    strategy: dict[str, Any] | None = None,
+    initial_balance: float = 10_000.0,
+    maker_fee: float = 0.00015,
+    taker_fee: float = 0.00045,
+    slippage_pct: float = 0.00005,
+    order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
+) -> dict[str, Any]:
+    """Load, signal, and simulate one historical backtest."""
+    client = HyperliquidClient()
+    frame = load_backtest_frame(symbol, interval, start_at, end_at, client=client)
+    market = client.get_market(symbol) or {}
+    max_leverage = int(market.get("maxLeverage") or 3)
+    frame = attach_signals(frame, strategy)
+    return _simulate_backtest(
+        frame,
+        symbol=symbol,
+        interval=interval,
+        strategy=strategy,
+        initial_balance=initial_balance,
+        maker_fee=maker_fee,
+        taker_fee=taker_fee,
+        slippage_pct=slippage_pct,
+        order_type=order_type,
+        fee_source=fee_source,
+        slippage_source=slippage_source,
+        max_leverage=max_leverage,
+    )
