@@ -71,6 +71,11 @@ function ProtectiveDetails({ position }: { position: Position }) {
         {position.protectiveStatus === 'unprotected' && <ShieldAlert className="w-3 h-3" />}
         Protection: {position.protectiveStatus || 'disabled'}
       </div>
+      {position.protectiveStatus === 'unprotected' && position.mode === 'live' && (
+        <div className="text-amber-300">
+          Protective triggers are not armed. If this followed an unattended live limit fill, the monitor cannot sign them.
+        </div>
+      )}
       {position.stopPrice !== null && (
         <div className="text-gray-400">Stop ${position.stopPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</div>
       )}
@@ -92,6 +97,7 @@ function ProtectiveDetails({ position }: { position: Position }) {
 type ActionModalState =
   | { kind: 'close'; positionId: string; symbol: string; mode: 'paper' | 'live' }
   | { kind: 'cancel'; orderId: string; symbol: string }
+  | { kind: 'localCancel'; orderId: string; symbol: string; mode: 'paper' | 'live' }
   | { kind: 'kill'; mode: 'paper' | 'live' };
 
 function ActionModal({
@@ -113,19 +119,21 @@ function ActionModal({
 }) {
   if (!action) return null;
 
-  const isLiveAction = action.kind === 'cancel' ? true : action.mode === 'live';
+  const isLiveAction = action.kind === 'cancel' || action.mode === 'live';
   const requiresPassword =
     isLiveAction;
   const title = action.kind === 'close'
     ? `Close ${action.symbol} position`
-    : action.kind === 'cancel'
+    : action.kind === 'cancel' || action.kind === 'localCancel'
       ? `Cancel ${action.symbol} order`
       : `Activate ${action.mode} kill switch`;
   const description = action.kind === 'close'
     ? `This will close the selected ${action.mode} ${action.symbol} position.`
     : action.kind === 'cancel'
       ? `This will cancel resting exchange order ${action.orderId} for ${action.symbol}.`
-      : action.mode === 'live'
+      : action.kind === 'localCancel'
+        ? `This will cancel our ${action.mode} resting order ${action.orderId} for ${action.symbol}.`
+        : action.mode === 'live'
         ? "This will cancel all resting exchange orders, close every open live position, and disable this wallet's live gate."
         : "This will close every open paper position and disable this wallet's live gate. Paper execution does not create exchange orders.";
 
@@ -317,6 +325,17 @@ export function Positions() {
     setActionModal({ kind: 'cancel', orderId, symbol });
   };
 
+  const handleCancelOrder = (order: Order) => {
+    setActionPassword('');
+    setActionModalError('');
+    setActionModal({
+      kind: 'localCancel',
+      orderId: order.id,
+      symbol: order.symbol,
+      mode: order.mode || 'paper',
+    });
+  };
+
   const handleKillSwitch = async () => {
     if (!selectedWallet) return;
     setActionPassword('');
@@ -350,6 +369,13 @@ export function Positions() {
           symbol: actionModal.symbol,
           orderId: actionModal.orderId,
           masterPassword: actionPassword,
+        });
+      } else if (actionModal.kind === 'localCancel') {
+        await cancelExchangeOrder({
+          walletId: selectedWallet.id,
+          symbol: actionModal.symbol,
+          orderId: actionModal.orderId,
+          masterPassword: actionModal.mode === 'live' ? actionPassword : undefined,
         });
       } else {
         setKillResult(await activateKillSwitch({
@@ -634,17 +660,21 @@ export function Positions() {
       <Card>
         <h2 className="text-lg font-medium mb-4">Orders</h2>
         <div className="overflow-x-auto -mx-5 px-5">
-          <table className="w-full text-sm text-left min-w-[600px]">
+          <table className="w-full text-sm text-left min-w-[980px]">
             <thead className="text-gray-400 border-b border-gray-800">
               <tr>
                 <th className="pb-3 font-medium">ID</th>
                 <th className="pb-3 font-medium">Market</th>
                 <th className="pb-3 font-medium">Side</th>
-                <th className="pb-3 font-medium">Size</th>
-                <th className="pb-3 font-medium">Price</th>
+                <th className="pb-3 font-medium">Requested</th>
+                <th className="pb-3 font-medium">Filled</th>
+                <th className="pb-3 font-medium">Limit</th>
+                <th className="pb-3 font-medium">TIF</th>
+                <th className="pb-3 font-medium">Expiry</th>
                 <th className="pb-3 font-medium">Type</th>
                 <th className="pb-3 font-medium">Status</th>
                 <th className="pb-3 font-medium">Time</th>
+                <th className="pb-3 font-medium"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
@@ -654,22 +684,48 @@ export function Positions() {
                   <td className="py-3 font-medium">{order.symbol}</td>
                   <td className={`py-3 ${order.side === 'Buy' ? 'text-emerald-400' : 'text-rose-400'}`}>{order.side}</td>
                   <td className="py-3">{order.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
-                  <td className="py-3 text-gray-400">${order.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                  <td className="py-3 text-gray-400">
+                    {(order.filledSize ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                    <span className="text-gray-600"> / {order.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                  </td>
+                  <td className="py-3 text-gray-400">
+                    {order.limitPrice !== null && order.limitPrice !== undefined
+                      ? `$${order.limitPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}`
+                      : '-'}
+                  </td>
+                  <td className="py-3 text-gray-400">{order.tif || '-'}</td>
+                  <td className="py-3 text-gray-500 text-xs">
+                    {order.expiresAt ? new Date(order.expiresAt).toLocaleString() : '-'}
+                  </td>
                   <td className="py-3 text-gray-400">{order.type}</td>
                   <td className="py-3">
                     <span className={`text-xs px-2 py-0.5 rounded border ${
                       order.status === 'filled' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                      order.status === 'open' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                      order.status === 'resting' || order.status === 'partially_filled' || order.status === 'open'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                      order.status === 'expired' || order.status === 'cancelled'
+                        ? 'bg-gray-700 text-gray-400 border-gray-600' :
                       'bg-gray-700 text-gray-400 border-gray-600'
                     }`}>
                       {order.status}
                     </span>
                   </td>
                   <td className="py-3 text-gray-500 text-xs">{new Date(order.timestamp).toLocaleString()}</td>
+                  <td className="py-3">
+                    {(order.status === 'resting' || order.status === 'partially_filled') && (
+                      <button
+                        onClick={() => handleCancelOrder(order)}
+                        disabled={loading || actionLoading}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded bg-amber-600/20 text-amber-300 hover:bg-amber-600/30 text-xs font-medium disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
               {orders.length === 0 && (
-                <tr><td colSpan={8} className="py-4 text-gray-500">No orders.</td></tr>
+                <tr><td colSpan={12} className="py-4 text-gray-500">No local orders for this wallet.</td></tr>
               )}
             </tbody>
           </table>

@@ -66,14 +66,25 @@ export interface Position {
 
 export interface Order {
   id: string;
+  signalId?: string | null;
+  walletId?: string;
   symbol: string;
   side: 'Buy' | 'Sell';
   size: number;
   price: number;
   type: 'Market' | 'Limit';
-  status: 'filled' | 'open' | 'cancelled';
+  notional?: number;
+  leverage?: number;
+  fees?: number;
+  status: 'filled' | 'failed' | 'closed' | 'resting' | 'partially_filled' | 'cancelled' | 'expired' | 'open';
   mode?: 'paper' | 'live';
   timestamp: string;
+  limitPrice?: number | null;
+  tif?: 'Alo' | 'Gtc' | 'Ioc' | string | null;
+  filledSize?: number | null;
+  expiresAt?: string | null;
+  exchangeOrderId?: string | null;
+  updatedAt?: string | null;
   meta?: Record<string, unknown> | null;
 }
 

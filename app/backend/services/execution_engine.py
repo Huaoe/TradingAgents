@@ -216,7 +216,6 @@ class ExecutionEngine:
             order["notional"] = round(fill_notional, 2)
         self.store.update_order(order)
 
-        _, position_id = self.store.generate_ids()
         side = order["side"]
         protective = protective_levels(fill_price, side, risk_config)
         live_market = self.client.get_market(order["symbol"])
@@ -227,6 +226,83 @@ class ExecutionEngine:
             if live_market
             else fill_price
         )
+        existing = next(
+            (
+                position
+                for position in self.store.list_open_positions(order["walletId"])
+                if position["orderId"] == order["id"]
+            ),
+            None,
+        )
+        if existing:
+            previous_size = float(existing["size"])
+            total_size = previous_size + filled_size
+            weighted_entry = (
+                previous_size * float(existing["entryPrice"]) + fill_notional
+            ) / total_size
+            trailing_watermark = protective["trailingWatermark"]
+            if existing.get("trailingWatermark") is not None:
+                if side == "Buy" and trailing_watermark is not None:
+                    trailing_watermark = max(
+                        float(existing["trailingWatermark"]),
+                        float(trailing_watermark),
+                    )
+                elif side == "Sell" and trailing_watermark is not None:
+                    trailing_watermark = min(
+                        float(existing["trailingWatermark"]),
+                        float(trailing_watermark),
+                    )
+                else:
+                    trailing_watermark = existing["trailingWatermark"]
+            existing.update(
+                {
+                    "entryPrice": weighted_entry,
+                    "markPrice": live_mark,
+                    "size": total_size,
+                    "notional": round(weighted_entry * total_size, 2),
+                    "liquidationPrice": _liquidation_price(
+                        weighted_entry,
+                        order["leverage"],
+                        side,
+                    ),
+                    "margin": round(
+                        weighted_entry * total_size / order["leverage"],
+                        2,
+                    )
+                    if order["leverage"]
+                    else round(weighted_entry * total_size, 2),
+                    "stopPrice": protective["stopPrice"],
+                    "takeProfitPrice": protective["takeProfitPrice"],
+                    "trailingStopPct": protective["trailingStopPct"],
+                    "trailingWatermark": trailing_watermark,
+                    "protectiveStatus": (
+                        "pending"
+                        if any(
+                            position_level is not None
+                            for position_level in (
+                                protective["stopPrice"],
+                                protective["takeProfitPrice"],
+                                protective["trailingStopPct"],
+                            )
+                        )
+                        else "disabled"
+                    ),
+                    "trailingUnsupported": order["mode"] == "live"
+                    and float(risk_config.get("trailingStopPct") or 0.0) > 0,
+                }
+            )
+            self.store.update_position(existing)
+            if (
+                order["mode"] == "live"
+                and existing["protectiveStatus"] == "pending"
+                and not existing.get("exchangeStopOrderId")
+                and not existing.get("exchangeTakeProfitOrderId")
+            ):
+                existing["protectiveStatus"] = "unprotected"
+                self.store.update_position(existing)
+            return self._normalize_position_side(existing)
+
+        _, position_id = self.store.generate_ids()
         position = {
             "id": position_id,
             "orderId": order["id"],
@@ -823,6 +899,7 @@ class ExecutionEngine:
     def _monitor_pending_orders(self) -> None:
         """Advance paper and live resting orders without signing transactions."""
         now = datetime.now(timezone.utc)
+        live_orders_by_wallet: dict[str, list[dict[str, Any]]] = {}
         for order in self.store.list_pending_orders():
             expires_at = order.get("expiresAt")
             if expires_at:
@@ -879,7 +956,13 @@ class ExecutionEngine:
                 ):
                     continue
                 fee_rate, fee_source = self._maker_fee_rate(wallet.address)
-                fees = float(limit_price) * float(order["size"]) * fee_rate
+                remaining_size = max(
+                    0.0,
+                    float(order["size"]) - float(order.get("filledSize") or 0.0),
+                )
+                if not remaining_size:
+                    continue
+                fees = round(float(limit_price) * remaining_size * fee_rate, 4)
                 order["meta"] = order.get("meta") or {}
                 order["meta"]["feeSource"] = fee_source
                 order["meta"]["costSource"] = "paper_maker"
@@ -887,52 +970,76 @@ class ExecutionEngine:
                     order,
                     wallet,
                     float(limit_price),
-                    float(order["size"]) - float(order.get("filledSize") or 0.0),
+                    remaining_size,
                     fees,
                     risk_config,
                 )
                 continue
+            live_orders_by_wallet.setdefault(order["walletId"], []).append(order)
 
-            exchange_orders = self.client.get_open_orders(wallet.address, force=True)
-            exchange_order_id = order.get("exchangeOrderId")
+        for wallet_id, orders in live_orders_by_wallet.items():
+            wallet = self.wallet_store.get_wallet(wallet_id)
+            if not wallet:
+                continue
+            try:
+                exchange_orders = self.client.get_open_orders(wallet.address, force=True)
+                user_fills = self.client.get_user_fills(wallet.address, force=True)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Live pending-order check failed for wallet %s: %s", wallet_id, exc)
+                continue
             resting = {
                 str(item.get("oid") or item.get("orderId"))
                 for item in exchange_orders
             }
-            fills = self._lookup_fills(wallet.address, exchange_order_id)
-            measured = _fill_metrics(fills) if fills else {"size": 0.0, "price": 0.0, "fees": 0.0}
-            observed_size = float(measured["size"])
-            current_size = float(order.get("filledSize") or 0.0)
-            new_size = observed_size - current_size
-            if new_size > 1e-9:
-                previous_fees = float((order.get("meta") or {}).get("measuredFees") or 0.0)
-                new_fees = max(0.0, float(measured["fees"]) - previous_fees)
-                order["meta"] = order.get("meta") or {}
-                order["meta"]["measuredFees"] = float(measured["fees"])
-                self._settle_pending_fill(
-                    order,
-                    wallet,
-                    float(measured["price"] or order["price"]),
-                    new_size,
-                    new_fees,
-                    risk_config,
+            for order in orders:
+                risk_config = (
+                    (order.get("meta") or {}).get("signal", {}).get("meta", {}).get("riskConfig")
+                    or {}
                 )
-                current_size = observed_size
-            if current_size >= float(order["size"]) - 1e-9:
-                order["status"] = "filled"
-                self.store.update_order(order)
-            elif exchange_order_id is not None and str(exchange_order_id) in resting:
-                order["status"] = "partially_filled" if current_size else "resting"
-                self.store.update_order(order)
-            else:
-                order["status"] = "cancelled"
-                self.store.update_order(order)
-                self.alert_engine.execution_divergence(
-                    f"Live limit order {order['id']} disappeared from exchange with "
-                    f"{current_size:.8f} of {order['size']:.8f} filled; no unobserved fill assumed.",
-                    order["walletId"],
-                    order["id"],
+                exchange_order_id = order.get("exchangeOrderId")
+                matched_fills = [
+                    fill
+                    for fill in user_fills
+                    if exchange_order_id is not None
+                    and str(fill.get("oid") or fill.get("orderId")) == str(exchange_order_id)
+                ]
+                measured = (
+                    _fill_metrics(matched_fills)
+                    if matched_fills
+                    else {"size": 0.0, "price": 0.0, "fees": 0.0}
                 )
+                observed_size = float(measured["size"])
+                current_size = float(order.get("filledSize") or 0.0)
+                new_size = observed_size - current_size
+                if new_size > 1e-9:
+                    previous_fees = float((order.get("meta") or {}).get("measuredFees") or 0.0)
+                    new_fees = max(0.0, float(measured["fees"]) - previous_fees)
+                    order["meta"] = order.get("meta") or {}
+                    order["meta"]["measuredFees"] = float(measured["fees"])
+                    self._settle_pending_fill(
+                        order,
+                        wallet,
+                        float(measured["price"] or order["price"]),
+                        new_size,
+                        new_fees,
+                        risk_config,
+                    )
+                    current_size = observed_size
+                if current_size >= float(order["size"]) - 1e-9:
+                    order["status"] = "filled"
+                    self.store.update_order(order)
+                elif exchange_order_id is not None and str(exchange_order_id) in resting:
+                    order["status"] = "partially_filled" if current_size else "resting"
+                    self.store.update_order(order)
+                else:
+                    order["status"] = "cancelled"
+                    self.store.update_order(order)
+                    self.alert_engine.execution_divergence(
+                        f"Live limit order {order['id']} disappeared from exchange with "
+                        f"{current_size:.8f} of {order['size']:.8f} filled; no unobserved fill assumed.",
+                        order["walletId"],
+                        order["id"],
+                    )
 
     def _monitor_live_protection(self, position: dict[str, Any]) -> None:
         expected = {
@@ -1021,13 +1128,24 @@ class ExecutionEngine:
         if not private_key:
             raise ValueError("Could not decrypt wallet private key")
         exchange = _live_exchange(wallet, private_key)
-        result = exchange.cancel(symbol, int(order_id))
+        exchange_order_id = (
+            str(local.get("exchangeOrderId"))
+            if local and local["walletId"] == wallet_id and local.get("exchangeOrderId")
+            else order_id
+        )
+        result = exchange.cancel(symbol, int(exchange_order_id))
         self.client.get_open_orders(wallet.address, force=True)
-        local = self.store.get_order_by_exchange_id(wallet_id, str(order_id))
+        local = self.store.get_order_by_exchange_id(wallet_id, exchange_order_id)
         if local and local["status"] in {"resting", "partially_filled"}:
             local["status"] = "cancelled"
             self.store.update_order(local)
-        return {"walletId": wallet_id, "symbol": symbol, "orderId": order_id, "result": result}
+        return {
+            "walletId": wallet_id,
+            "symbol": symbol,
+            "orderId": exchange_order_id,
+            "localOrderId": local["id"] if local else None,
+            "result": result,
+        }
 
     def kill_switch(
         self,

@@ -353,14 +353,18 @@ class ExecutionStore:
         conn.execute(
             """
             UPDATE positions
-            SET mark_price = ?, pnl = ?, pnl_pct = ?, liquidation_price = ?, margin = ?, status = ?,
+            SET entry_price = ?, mark_price = ?, size = ?, notional = ?, pnl = ?, pnl_pct = ?,
+                liquidation_price = ?, margin = ?, status = ?,
                 stop_price = ?, take_profit_price = ?, trailing_stop_pct = ?, trailing_watermark = ?,
                 exit_reason = ?, protective_status = ?, exchange_stop_order_id = ?,
                 exchange_take_profit_order_id = ?, trailing_unsupported = ?, closed_at = ?
             WHERE id = ?
             """,
             (
+                position["entryPrice"],
                 position["markPrice"],
+                position["size"],
+                position["notional"],
                 position["pnl"],
                 position["pnlPct"],
                 position.get("liquidationPrice"),
@@ -398,12 +402,13 @@ class ExecutionStore:
         conn.execute(
             """
             UPDATE orders
-            SET price = ?, notional = ?, fees = ?, type = ?, status = ?, meta = ?,
+            SET size = ?, price = ?, notional = ?, fees = ?, type = ?, status = ?, meta = ?,
                 limit_price = ?, tif = ?, filled_size = ?, expires_at = ?,
                 exchange_order_id = ?, updated_at = ?
             WHERE id = ?
             """,
             (
+                order["size"],
                 order["price"],
                 order["notional"],
                 order["fees"],

@@ -165,6 +165,30 @@ def test_reconciliation_aggregates_multiple_local_positions_by_symbol():
     assert size_divergence["localPositionIds"] == ["pos-long-a", "pos-long-b"]
 
 
+def test_reconciliation_ignores_position_protective_orders():
+    local_position = _position()
+    local_position["exchangeStopOrderId"] = "101"
+    local_position["exchangeTakeProfitOrderId"] = "102"
+    service = ReconciliationService(
+        client=FakeClient(
+            _state(("BTC", 1.0, 100.0)),
+            open_orders=[
+                {"oid": 101, "coin": "BTC"},
+                {"oid": 102, "coin": "BTC"},
+            ],
+        ),
+        store=FakeStore([local_position]),
+        wallet_store=FakeWallets(),
+        portfolio_store=FakePortfolio(),
+        alert_engine=FakeAlerts(),
+    )
+
+    result = service.reconcile("wallet-1")
+
+    assert result["status"] == "ok"
+    assert result["divergences"] == []
+
+
 def test_size_tolerance_has_relative_and_absolute_floor():
     assert _size_matches(1.001, 1.0)
     assert not _size_matches(1.002, 1.0)

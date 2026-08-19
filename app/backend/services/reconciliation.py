@@ -83,9 +83,21 @@ class ReconciliationService:
             exchange = _exchange_positions(state)
             exchange_orders = self.client.get_open_orders(wallet.address, force=True)
             local: dict[str, dict[str, Any]] = {}
-            for position in self.store.list_open_positions(wallet_id):
-                if position.get("mode", "paper") != "live":
-                    continue
+            local_positions = [
+                position
+                for position in self.store.list_open_positions(wallet_id)
+                if position.get("mode", "paper") == "live"
+            ]
+            protective_order_ids = {
+                str(order_id)
+                for position in local_positions
+                for order_id in (
+                    position.get("exchangeStopOrderId"),
+                    position.get("exchangeTakeProfitOrderId"),
+                )
+                if order_id
+            }
+            for position in local_positions:
                 symbol = position["symbol"].upper()
                 signed_size = (
                     float(position["size"])
@@ -119,6 +131,7 @@ class ReconciliationService:
                 self._compare_orders(
                     self.store.list_pending_orders(wallet_id, mode="live"),
                     exchange_orders,
+                    protective_order_ids,
                 )
             )
             result["divergences"] = divergences
@@ -213,7 +226,9 @@ class ReconciliationService:
     def _compare_orders(
         local_orders: list[dict[str, Any]],
         exchange_orders: list[dict[str, Any]],
+        protective_order_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
+        protective_order_ids = protective_order_ids or set()
         local_by_oid = {
             str(order.get("exchangeOrderId")): order
             for order in local_orders
@@ -242,7 +257,7 @@ class ReconciliationService:
                 }
             )
         for oid, order in exchange_by_oid.items():
-            if oid in local_by_oid:
+            if oid in local_by_oid or oid in protective_order_ids:
                 continue
             symbol = str(order.get("coin") or order.get("symbol") or "").upper()
             divergences.append(
