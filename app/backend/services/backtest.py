@@ -314,7 +314,7 @@ def run_backtest(
 
     fee_rate = maker_fee if order_type == "maker" else taker_fee + slippage_pct
 
-    def mark_equity(current_price: float, current_time: pd.Timestamp) -> None:
+    def mark_equity(current_price: float, current_time: pd.Timestamp, candle: pd.Series) -> None:
         nonlocal peak
         unrealized = 0.0
         if position != 0 and entry_price:
@@ -329,7 +329,14 @@ def run_backtest(
         dd = (peak - total) / peak if peak > 0 else 0.0
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
         price_curve.append(
-            {"time": current_time.isoformat(), "close": round(float(current_price), 8)}
+            {
+                "time": current_time.isoformat(),
+                "open": round(float(candle["open"]), 8),
+                "high": round(float(candle["high"]), 8),
+                "low": round(float(candle["low"]), 8),
+                "close": round(float(current_price), 8),
+                "volume": round(float(candle.get("volume", 0.0)), 8),
+            }
         )
 
     def open_position(new_position: int, price: float, time: pd.Timestamp, confidence: int) -> None:
@@ -516,7 +523,7 @@ def run_backtest(
         ):
             open_position(signal, price, time, int(row["confidence"]))
 
-        mark_equity(price, time)
+        mark_equity(price, time, row)
 
     # Close any open position at the final close.
     if position != 0:

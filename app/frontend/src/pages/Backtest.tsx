@@ -14,6 +14,7 @@ import {
 import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Card } from '../components/Card';
+import { CandlestickChart } from '../components/CandlestickChart';
 import {
   fetchSlippageEstimate,
   fetchStrategies,
@@ -335,27 +336,8 @@ export function Backtest() {
     }
   }
 
-  const priceChartData = useMemo(() => {
-    if (!result) return [];
-    const data = result.price.map((p) => ({ ...p, buy: null as number | null, sell: null as number | null }));
-    const map = new Map(data.map((d, i) => [d.time, i]));
-    for (const t of result.trades) {
-      const entryIdx = map.get(t.entryTime);
-      const exitIdx = map.get(t.exitTime);
-      if (t.side === 'LONG') {
-        if (entryIdx != null) data[entryIdx].buy = t.entryPrice;
-        if (exitIdx != null) data[exitIdx].sell = t.exitPrice;
-      } else {
-        if (entryIdx != null) data[entryIdx].sell = t.entryPrice;
-        if (exitIdx != null) data[exitIdx].buy = t.exitPrice;
-      }
-    }
-    return data;
-  }, [result]);
-
   const equityZoom = useChartZoom(result?.equity ?? []);
   const drawdownZoom = useChartZoom(result?.drawdown ?? []);
-  const priceZoom = useChartZoom(priceChartData);
 
   const stats = result?.summary;
 
@@ -750,56 +732,9 @@ export function Backtest() {
             </div>
           </Card>
 
-          <Card title="Price + Buy / Sell Signals" actions={<ZoomControls zoomIn={priceZoom.zoomIn} zoomOut={priceZoom.zoomOut} reset={priceZoom.reset} />}>
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={priceZoom.visibleData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                  <XAxis
-                    dataKey="time"
-                    tickFormatter={(t) => new Date(t).toLocaleDateString()}
-                    stroke="#9ca3af"
-                    tick={{ fill: '#9ca3af', fontSize: 10 }}
-                    minTickGap={30}
-                  />
-                  <YAxis
-                    stroke="#9ca3af"
-                    tick={{ fill: '#9ca3af', fontSize: 10 }}
-                    tickFormatter={(v) => `$${Number(v).toLocaleString()}`}
-                  />
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151' }}
-                    labelFormatter={(label) => new Date(String(label)).toLocaleString()}
-                    formatter={(value, name) => [name === 'close' ? formatUSD(Number(value)) : `$${Number(value).toLocaleString()}`, name as string]}
-                  />
-                  <Line type="monotone" dataKey="close" stroke="#38bdf8" strokeWidth={2} dot={false} name="Price" />
-                  <Line
-                    dataKey="buy"
-                    stroke="transparent"
-                    dot={{ r: 5, fill: '#10b981' }}
-                    isAnimationActive={false}
-                    name="Buy"
-                  />
-                  <Line
-                    dataKey="sell"
-                    stroke="transparent"
-                    dot={{ r: 5, fill: '#ef4444' }}
-                    isAnimationActive={false}
-                    name="Sell"
-                  />
-                  <Brush
-                    dataKey="close"
-                    startIndex={0}
-                    endIndex={Math.max(0, priceZoom.visibleData.length - 1)}
-                    onChange={priceZoom.onBrushChange}
-                    height={30}
-                    travellerWidth={8}
-                    stroke="#38bdf8"
-                    fill="rgba(56, 189, 248, 0.2)"
-                    tickFormatter={(t: string) => new Date(t).toLocaleDateString()}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+          <Card title="Price + Buy / Sell Signals">
+            <div className="h-96">
+              <CandlestickChart price={result.price} trades={result.trades} />
             </div>
           </Card>
 

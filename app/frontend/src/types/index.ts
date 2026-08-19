@@ -211,7 +211,14 @@ export interface BacktestResult {
   summary: BacktestSummary;
   equity: { time: string; equity: number }[];
   drawdown: { time: string; drawdown: number }[];
-  price: { time: string; close: number }[];
+  price: {
+    time: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+  }[];
   trades: BacktestTrade[];
   monthlyReturns: Record<string, number> | null;
 }
