@@ -290,8 +290,8 @@ Epics 15–16 were delivered in Sprint 12. Epics 17–20 are the current backlog
 | Epic 18 — Live-Trading Readiness | Done except the testnet soak (PR #19) |
 | Epic 19 — Research Depth | Not started |
 | Epic 20 — Frontend & Observability Debt | Not started |
-| Epic 21 — Execution Parity & Controls | In progress |
-| Epic 22 — Limit Orders & Scheduling | Not started |
+| Epic 21 — Execution Parity & Controls | Done (PR #20) |
+| Epic 22 — Limit Orders & Scheduling | In progress — limit/maker orders under way, scheduling not started |
 
 ## Epic 15: Hyperliquid-Accurate Execution Costs *(Done)*
 
@@ -381,7 +381,7 @@ Look for an edge that survives out of sample, and be willing to conclude there i
 - One chart library in `package.json`, no chunk-size warning in `npm run build`.
 - Frontend component tests run in CI.
 
-## Epic 21: Execution Parity & Controls *(In progress)*
+## Epic 21: Execution Parity & Controls *(Done)*
 
 Make the execution paths implement the strategy that was backtested, and give the operator a stop button.
 
@@ -399,9 +399,9 @@ The gap: `stopLossPct`, `takeProfitPct` and `trailingStopPct` are honoured only 
 - A live position carries reduce-only stop and take-profit orders on the exchange, which are cancelled when it closes; a live position with a trailing stop says the leg is unenforced.
 - The kill switch flattens every open position for a wallet, cancels its resting orders, and leaves the wallet unable to open new ones.
 
-## Epic 22: Limit Orders & Scheduling
+## Epic 22: Limit Orders & Scheduling *(In progress)*
 
-The two remaining reasons the app is a console rather than an agent.
+The two remaining reasons the app is a console rather than an agent. Split in two because they land independently: the maker path first, scheduling second.
 
 **Scope**
 - Limit/maker execution with a resting-order lifecycle (placement, partial fill, expiry, cancel, reconciliation of unfilled orders). Today only `market_open` is ever called, so the ~3 bps maker round trip that the funding templates depend on is unreachable live and those backtest results cannot be acted on.
@@ -411,3 +411,8 @@ The two remaining reasons the app is a console rather than an agent.
 **Definition of Done**
 - A maker order can be placed, partially filled, and either completed or cancelled, with local state matching the exchange throughout.
 - A paper strategy runs unattended for 24 hours on its schedule and can be paused and stopped from the UI.
+
+**What the exchange and the key model do not allow, and must therefore be said rather than assumed**
+- A paper maker fill models no queue position: it fills when the mark reaches the limit, which is an upper bound in the same way the backtest's maker mode is.
+- The background monitor holds no signing key, so a live limit order that fills unattended cannot have its protective triggers armed (the position is marked unprotected) and its expiry cannot be enforced (it alerts for manual cancellation).
+- Unattended *live* execution stays refused until a deliberate session-unlock design exists; paper automation needs no key and lands first.
