@@ -23,6 +23,7 @@ from backend.services.wallet_store import WalletStore
 # Hyperliquid taker fee at base tier.
 TAKER_FEE = 0.00045
 PAPER_SLIPPAGE = 0.0005
+TRIGGER_SLIPPAGE = 0.01
 FILL_LOOKUP_ATTEMPTS = 3
 FILL_LOOKUP_DELAY_SECONDS = 0.2
 PNL_DIVERGENCE_TOLERANCE = 0.01
@@ -75,11 +76,6 @@ def _exchange_order_id(result: dict[str, Any]) -> str | None:
         if isinstance(record, dict) and record.get("oid") is not None:
             return str(record["oid"])
     return None
-
-
-def _trigger_order_id(result: dict[str, Any]) -> str | None:
-    """Extract a resting trigger order id from an Exchange.order response."""
-    return _exchange_order_id(result)
 
 
 def _fill_metrics(fills: list[dict[str, Any]]) -> dict[str, Any]:
@@ -528,11 +524,16 @@ class ExecutionEngine:
             ):
                 if price is None:
                     continue
+                limit_price = (
+                    float(price) * (1 + TRIGGER_SLIPPAGE)
+                    if close_is_buy
+                    else float(price) * (1 - TRIGGER_SLIPPAGE)
+                )
                 result = exchange.order(
                     position["symbol"],
                     close_is_buy,
                     float(position["size"]),
-                    float(price),
+                    limit_price,
                     {
                         "trigger": {
                             "triggerPx": float(price),
@@ -542,7 +543,7 @@ class ExecutionEngine:
                     },
                     reduce_only=True,
                 )
-                order_id = _trigger_order_id(result)
+                order_id = _exchange_order_id(result)
                 if order_id is None:
                     raise ValueError(f"Exchange did not return a trigger order id for {tpsl}")
                 placed[field] = order_id
@@ -633,13 +634,32 @@ class ExecutionEngine:
             }
             missing = expected - present
             if missing:
-                position["protectiveStatus"] = "unprotected"
-                self.store.update_position(position)
-                self.alert_engine.protective_unprotected(
-                    f"Expected live protective orders are missing: {sorted(missing)}",
-                    position["walletId"],
-                    position["id"],
+                state = self.client.get_clearinghouse_state(wallet.address, force=True)
+                exchange_position = next(
+                    (
+                        asset.get("position", {})
+                        for asset in state.get("assetPositions", [])
+                        if str(asset.get("position", {}).get("coin", "")).upper()
+                        == position["symbol"].upper()
+                        and abs(float(asset.get("position", {}).get("szi") or 0.0)) > 1e-9
+                    ),
+                    None,
                 )
+                if exchange_position is None:
+                    logger.warning(
+                        "Live trigger %s vanished after exchange position %s closed; "
+                        "reconciliation will report any local divergence.",
+                        sorted(missing),
+                        position["symbol"],
+                    )
+                else:
+                    position["protectiveStatus"] = "unprotected"
+                    self.store.update_position(position)
+                    self.alert_engine.protective_unprotected(
+                        f"Expected live protective orders are missing: {sorted(missing)}",
+                        position["walletId"],
+                        position["id"],
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Live protective order check failed for %s: %s", position["symbol"], exc)
 
@@ -677,6 +697,7 @@ class ExecutionEngine:
         wallet = self.wallet_store.get_wallet(wallet_id)
         if not wallet:
             raise ValueError(f"Wallet {wallet_id} not found")
+        self.portfolio_engine.portfolio_store.set_live_enabled(wallet_id, False)
         exchange = None
         order_results: list[dict[str, Any]] = []
         if mode == "live":
@@ -732,7 +753,6 @@ class ExecutionEngine:
                 outcome["error"] = str(exc)
             position_results.append(outcome)
 
-        self.portfolio_engine.portfolio_store.set_live_enabled(wallet_id, False)
         self.alert_engine.kill_switch(wallet_id, mode)
         return {
             "walletId": wallet_id,

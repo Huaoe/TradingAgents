@@ -22,6 +22,16 @@ from backend.services.llm_tracker import LlmUsageTracker
 from backend.services.llm_usage_store import LlmUsageStore
 from backend.services.template_signals import prepare_candles_features, signal_for_bar
 
+_GUARDRAIL_FIELDS = frozenset(
+    {
+        "maxTotalExposure",
+        "maxPositionSize",
+        "maxOpenPositions",
+        "dailyLossLimit",
+        "maxLeverage",
+    }
+)
+
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
     if len(df) < period + 1:
@@ -84,10 +94,14 @@ def _build_signal(
     raw_cfg = strategy or {}
     risk_cfg = raw_cfg.get("riskConfig") or {}
     cfg = {**raw_cfg, **risk_cfg}
-    effective_risk_config = {
-        **cfg,
-        **RiskConfig.model_validate(cfg).model_dump(),
-    }
+    effective_risk_config = RiskConfig.model_validate(cfg).model_dump()
+    effective_risk_config.update(
+        {
+            key: cfg[key]
+            for key in _GUARDRAIL_FIELDS
+            if key in cfg
+        }
+    )
     long_funding_threshold = cfg.get("longFundingThreshold", -0.000005)
     short_funding_threshold = cfg.get("shortFundingThreshold", 0.000012)
     leverage = min(int(cfg.get("leverage", 3)), market.get("maxLeverage", 3))

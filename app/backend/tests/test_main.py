@@ -176,6 +176,20 @@ def test_metrics_update_with_activity(test_client):
     assert body["open_positions_count"] == 1
 
 
+def test_create_signal_from_stored_template_preserves_template(
+    test_client, mock_hyperliquid_client
+):
+    response = test_client.post(
+        "/api/signals",
+        json={"symbol": "BTC", "strategyId": "template-trend-following"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["strategyTemplate"] == "trend-following"
+    assert body["meta"]["strategyIdentity"] == "template-trend-following"
+
+
 def test_fee_and_slippage_estimate_routes(test_client):
     fees = test_client.get("/api/fees/0xabc")
     assert fees.status_code == 200

@@ -322,7 +322,7 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
             store = StrategyStore()
             stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
             if stored:
-                strategy = {**stored.riskConfig.model_dump(), **strategy}
+                strategy = {**stored.model_dump(), **strategy}
             else:
                 raise HTTPException(
                     status_code=404, detail=f"Strategy {payload.strategyId} not found"
@@ -346,7 +346,7 @@ async def create_signal(payload: SignalCreate) -> dict[str, Any]:
             store = StrategyStore()
             stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
             if stored:
-                strategy = {**stored.riskConfig.model_dump(), **strategy}
+                strategy = {**stored.model_dump(), **strategy}
             else:
                 raise HTTPException(
                     status_code=404, detail=f"Strategy {payload.strategyId} not found"

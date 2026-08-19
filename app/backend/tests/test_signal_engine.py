@@ -95,9 +95,20 @@ def test_build_signal_returns_action_and_confidence_for_custom(
 def test_build_signal_records_effective_risk_config(
     mock_hyperliquid_client, custom_strategy
 ):
-    signal = _build_signal("BTC", {**custom_strategy, "name": "audited"})
+    signal = _build_signal(
+        "BTC",
+        {
+            **custom_strategy,
+            "name": "audited",
+            "maxOpenPositions": 2,
+            "llmModel": "secret-model-name",
+        },
+    )
 
     risk_config = signal["meta"]["riskConfig"]
     assert risk_config["stopLossPct"] is None
     assert risk_config["leverage"] == 3
+    assert risk_config["maxOpenPositions"] == 2
+    assert "name" not in risk_config
+    assert "llmModel" not in risk_config
     assert signal["meta"]["strategyTemplate"] == "custom"
