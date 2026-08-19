@@ -218,6 +218,7 @@ export function Backtest() {
   const [makerFee, setMakerFee] = useState(0.0002);
   const [takerFee, setTakerFee] = useState(0.00045);
   const [slippagePct, setSlippagePct] = useState(0.0005);
+  const [orderType, setOrderType] = useState<'maker' | 'taker'>('taker');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -254,6 +255,7 @@ export function Backtest() {
         makerFee,
         takerFee,
         slippagePct,
+        orderType,
       });
       setResult(res);
     } catch (err) {
@@ -418,6 +420,17 @@ export function Backtest() {
                 />
               </div>
               <div className="space-y-1 lg:col-span-2">
+                <label className="text-xs font-medium text-gray-400">Order Type</label>
+                <select
+                  value={orderType}
+                  onChange={(e) => setOrderType(e.target.value as 'maker' | 'taker')}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                >
+                  <option value="taker">Taker (fee + slippage)</option>
+                  <option value="maker">Maker (maker fee, no slippage)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
                 <label className="text-xs font-medium text-gray-400">Slippage %</label>
                 <input
                   type="number"
@@ -614,6 +627,38 @@ export function Backtest() {
             </Card>
           </div>
 
+          <Card title="Cost Breakdown">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-gray-500">Gross PnL</div>
+                <div className={`font-semibold ${stats.totalGrossPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatUSD(stats.totalGrossPnl)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Fees</div>
+                <div className="font-semibold text-red-300">{formatUSD(-stats.totalFees)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Funding</div>
+                <div className="font-semibold text-red-300">{formatUSD(-stats.totalFundingCost)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Net PnL</div>
+                <div className={`font-semibold ${stats.totalGrossPnl - stats.totalFees - stats.totalFundingCost >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatUSD(stats.totalGrossPnl - stats.totalFees - stats.totalFundingCost)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Assumptions</div>
+                <div className="text-gray-300">
+                  {stats.orderType} · fee {(stats.orderType === 'maker' ? stats.makerFee : stats.takerFee) * 10000} bps
+                  {stats.orderType === 'taker' ? ` + ${stats.slippagePct * 10000} bps slip` : ''}
+                </div>
+              </div>
+            </div>
+          </Card>
+
           <Card title="Price + Buy / Sell Signals" actions={<ZoomControls zoomIn={priceZoom.zoomIn} zoomOut={priceZoom.zoomOut} reset={priceZoom.reset} />}>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -679,6 +724,7 @@ export function Backtest() {
                     <th className="text-right py-2 px-2" title={TRADE_HINTS['Exit $']}>Exit $</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Size}>Size</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS['Net PnL']}>Net PnL</th>
+                    <th className="text-left py-2 px-2">Exit Reason</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Return}>Return</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Confidence}>Confidence</th>
                   </tr>
@@ -703,6 +749,7 @@ export function Backtest() {
                       <td className={`py-2 px-2 text-right font-medium ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {formatUSD(t.netPnl)}
                       </td>
+                      <td className="py-2 px-2 text-gray-300">{t.exitReason.replaceAll('_', ' ')}</td>
                       <td className={`py-2 px-2 text-right ${t.returnPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {formatPct(t.returnPct)}
                       </td>

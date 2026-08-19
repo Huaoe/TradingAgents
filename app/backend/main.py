@@ -246,6 +246,7 @@ async def backtest(payload: BacktestRequest) -> BacktestResult:
             maker_fee=payload.makerFee,
             taker_fee=payload.takerFee,
             slippage_pct=payload.slippagePct,
+            order_type=payload.orderType,
         )
         _METRICS["backtests_run"] += 1
         return BacktestResult(**result)

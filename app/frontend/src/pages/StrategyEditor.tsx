@@ -18,11 +18,17 @@ const DEFAULT_STRATEGY: StrategyInput = {
   executionMode: 'manual',
   schedule: '',
   riskConfig: {
-    longFundingThreshold: -0.05,
-    shortFundingThreshold: 0.05,
+    longFundingThreshold: -0.0005,
+    shortFundingThreshold: 0.0012,
     leverage: 3,
     allocation: 10,
     confidenceFloor: 60,
+    minHoldBars: 3,
+    cooldownBars: 3,
+    exitHysteresis: 50,
+    stopLossPct: 2,
+    takeProfitPct: 4,
+    trailingStopPct: 1.5,
   },
 };
 
@@ -126,6 +132,12 @@ export function StrategyEditor() {
             leverage: s.riskConfig.leverage,
             allocation: s.riskConfig.allocation * 100,
             confidenceFloor: s.riskConfig.confidenceFloor,
+            minHoldBars: s.riskConfig.minHoldBars,
+            cooldownBars: s.riskConfig.cooldownBars,
+            exitHysteresis: s.riskConfig.exitHysteresis,
+            stopLossPct: s.riskConfig.stopLossPct != null ? s.riskConfig.stopLossPct * 100 : undefined,
+            takeProfitPct: s.riskConfig.takeProfitPct != null ? s.riskConfig.takeProfitPct * 100 : undefined,
+            trailingStopPct: s.riskConfig.trailingStopPct != null ? s.riskConfig.trailingStopPct * 100 : undefined,
           },
         });
       })
@@ -215,6 +227,18 @@ export function StrategyEditor() {
       setError('Funding thresholds must be between -100% and 100%.');
       return false;
     }
+    if ((rc.minHoldBars ?? 0) < 0 || (rc.cooldownBars ?? 0) < 0) {
+      setError('Hold and cooldown bars cannot be negative.');
+      return false;
+    }
+    if ((rc.exitHysteresis ?? 50) < 0 || (rc.exitHysteresis ?? 50) > 100) {
+      setError('Exit hysteresis must be between 0 and 100.');
+      return false;
+    }
+    if ((rc.stopLossPct ?? 0) < 0 || (rc.takeProfitPct ?? 0) < 0 || (rc.trailingStopPct ?? 0) < 0) {
+      setError('Stop, target, and trailing percentages cannot be negative.');
+      return false;
+    }
     setError('');
     return true;
   };
@@ -232,6 +256,12 @@ export function StrategyEditor() {
           leverage: strategy.riskConfig?.leverage || 3,
           allocation: (strategy.riskConfig?.allocation || 10) / 100,
           confidenceFloor: strategy.riskConfig?.confidenceFloor || 60,
+          minHoldBars: strategy.riskConfig?.minHoldBars,
+          cooldownBars: strategy.riskConfig?.cooldownBars,
+          exitHysteresis: strategy.riskConfig?.exitHysteresis,
+          stopLossPct: strategy.riskConfig?.stopLossPct != null ? strategy.riskConfig.stopLossPct / 100 : undefined,
+          takeProfitPct: strategy.riskConfig?.takeProfitPct != null ? strategy.riskConfig.takeProfitPct / 100 : undefined,
+          trailingStopPct: strategy.riskConfig?.trailingStopPct != null ? strategy.riskConfig.trailingStopPct / 100 : undefined,
         },
       };
       if (isNew) {
@@ -425,19 +455,77 @@ export function StrategyEditor() {
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Long funding threshold (%)</label>
+              <label className="block text-sm text-gray-400 mb-1">Long funding threshold (hourly %)</label>
               <PercentInput
-                step={0.01}
+                step={0.0001}
                 value={strategy.riskConfig?.longFundingThreshold}
                 onChange={(value) => updateRisk('longFundingThreshold', value)}
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-400 mb-1">Short funding threshold (%)</label>
+              <label className="block text-sm text-gray-400 mb-1">Short funding threshold (hourly %)</label>
               <PercentInput
-                step={0.01}
+                step={0.0001}
                 value={strategy.riskConfig?.shortFundingThreshold}
                 onChange={(value) => updateRisk('shortFundingThreshold', value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Minimum hold (bars)</label>
+              <input
+                type="number"
+                min={0}
+                value={strategy.riskConfig?.minHoldBars ?? ''}
+                onChange={(e) => updateRisk('minHoldBars', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Post-exit cooldown (bars)</label>
+              <input
+                type="number"
+                min={0}
+                value={strategy.riskConfig?.cooldownBars ?? ''}
+                onChange={(e) => updateRisk('cooldownBars', e.target.value === '' ? 0 : parseInt(e.target.value, 10))}
+                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Exit hysteresis score</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={strategy.riskConfig?.exitHysteresis ?? ''}
+                onChange={(e) => updateRisk('exitHysteresis', e.target.value === '' ? 0 : Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Stop loss (%)</label>
+              <PercentInput
+                min={0}
+                step={0.1}
+                value={strategy.riskConfig?.stopLossPct}
+                onChange={(value) => updateRisk('stopLossPct', value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Take profit (%)</label>
+              <PercentInput
+                min={0}
+                step={0.1}
+                value={strategy.riskConfig?.takeProfitPct}
+                onChange={(value) => updateRisk('takeProfitPct', value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Trailing stop (%)</label>
+              <PercentInput
+                min={0}
+                step={0.1}
+                value={strategy.riskConfig?.trailingStopPct}
+                onChange={(value) => updateRisk('trailingStopPct', value)}
               />
             </div>
             <div>

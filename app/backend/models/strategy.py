@@ -10,11 +10,18 @@ from pydantic import BaseModel, Field
 class RiskConfig(BaseModel):
     """Risk parameters passed to the signal engine."""
 
-    longFundingThreshold: float = -0.0005
-    shortFundingThreshold: float = 0.0005
+    # Funding thresholds use the hourly rate returned by Hyperliquid.
+    longFundingThreshold: float = -0.000005
+    shortFundingThreshold: float = 0.000012
     leverage: int = 3
     allocation: float = 0.10
     confidenceFloor: int = 60
+    minHoldBars: int | None = None
+    cooldownBars: int | None = None
+    exitHysteresis: float | None = None
+    stopLossPct: float | None = None
+    takeProfitPct: float | None = None
+    trailingStopPct: float | None = None
 
 
 class StrategyBase(BaseModel):

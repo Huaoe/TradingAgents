@@ -99,6 +99,12 @@ export interface RiskConfig {
   leverage: number;
   allocation: number;
   confidenceFloor: number;
+  minHoldBars?: number;
+  cooldownBars?: number;
+  exitHysteresis?: number;
+  stopLossPct?: number;
+  takeProfitPct?: number;
+  trailingStopPct?: number;
 }
 
 export interface Strategy {
@@ -167,6 +173,13 @@ export interface BacktestSummary {
   interval: string;
   symbol: string;
   strategyName: string;
+  makerFee: number;
+  takerFee: number;
+  slippagePct: number;
+  orderType: 'maker' | 'taker';
+  totalGrossPnl: number;
+  totalFees: number;
+  totalFundingCost: number;
 }
 
 export interface BacktestTrade {
@@ -185,6 +198,7 @@ export interface BacktestTrade {
   netPnl: number;
   returnPct: number;
   confidence: number;
+  exitReason: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'end_of_backtest';
 }
 
 export interface BacktestResult {
@@ -207,6 +221,7 @@ export interface BacktestInput {
   makerFee?: number;
   takerFee?: number;
   slippagePct?: number;
+  orderType?: 'maker' | 'taker';
 }
 
 export interface Wallet {

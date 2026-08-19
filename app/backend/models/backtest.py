@@ -21,6 +21,7 @@ class BacktestRequest(BaseModel):
     makerFee: float = 0.0002
     takerFee: float = 0.00045
     slippagePct: float = 0.0005
+    orderType: Literal["maker", "taker"] = "taker"
 
 
 class TradeRecord(BaseModel):
@@ -41,6 +42,7 @@ class TradeRecord(BaseModel):
     netPnl: float
     returnPct: float
     confidence: int
+    exitReason: Literal["signal", "stop_loss", "take_profit", "trailing_stop", "end_of_backtest"]
 
 
 class BacktestSummary(BaseModel):
@@ -72,6 +74,13 @@ class BacktestSummary(BaseModel):
     interval: str
     symbol: str
     strategyName: str = ""
+    makerFee: float = 0.0002
+    takerFee: float = 0.00045
+    slippagePct: float = 0.0005
+    orderType: Literal["maker", "taker"] = "taker"
+    totalGrossPnl: float = 0.0
+    totalFees: float = 0.0
+    totalFundingCost: float = 0.0
 
 
 class BacktestResult(BaseModel):

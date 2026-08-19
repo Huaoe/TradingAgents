@@ -116,8 +116,8 @@ def signal_for_bar(
     funding = row.get("fundingRate", 0.0)
 
     cfg = strategy.get("riskConfig") or {}
-    long_thr = _safe_float(cfg.get("longFundingThreshold"), -0.0005)
-    short_thr = _safe_float(cfg.get("shortFundingThreshold"), 0.0005)
+    long_thr = _safe_float(cfg.get("longFundingThreshold"), -0.000005)
+    short_thr = _safe_float(cfg.get("shortFundingThreshold"), 0.000012)
     confidence_floor = int(_safe_float(cfg.get("confidenceFloor"), 60))
     template = strategy.get("template", "custom").replace("_", "-")
 
