@@ -155,9 +155,81 @@ def test_ineligible_high_sharpe_candidate_is_not_selected(monkeypatch):
     assert all(not fold["candidateId"].endswith(":0") for fold in result["selection"]["selectedFolds"])
 
 
+def test_no_trade_fold_scores_zero_and_curves_are_not_retained(monkeypatch):
+    frame = _frame()
+    include_price_values = []
+
+    monkeypatch.setattr(
+        search_module,
+        "attach_signals",
+        lambda data, strategy: data.assign(signal=0, confidence=50),
+    )
+
+    def fake_simulate(data, candidate, **kwargs):
+        include_price_values.append(kwargs["include_price"])
+        no_trades = candidate["id"].endswith(":0") and data.index[0] == frame.index[9]
+        result = _fake_result(data, trades=0 if no_trades else 5)
+        result["drawdown"] = [{"drawdown": 1.0}]
+        result["price"] = [{"close": 100.0}]
+        return result
+
+    monkeypatch.setattr(search_module, "_simulate_candidate", fake_simulate)
+    result = search_module.run_strategy_search(
+        symbol="BTC",
+        interval="1h",
+        start_at="2024-01-01",
+        end_at="2024-01-03",
+        templates=["trend_following"],
+        folds=3,
+        grid_preset="coarse",
+        prepared_frame=frame,
+        prepared_max_leverage=5,
+    )
+    candidate = next(item for item in result["candidates"] if item["candidateId"].endswith(":0"))
+    assert candidate["foldsWithTrades"] == 2
+    assert candidate["medianOutOfSampleSharpePerBar"] > candidate["meanOutOfSampleSharpePerBar"]
+    assert include_price_values and all(value is False for value in include_price_values)
+    assert all("equity" not in item for item in result["candidates"])
+    assert all("drawdown" not in item for item in result["candidates"])
+    assert all("price" not in item for item in result["candidates"])
+
+
+def test_fold_without_eligible_candidate_is_skipped(monkeypatch):
+    frame = _frame()
+
+    monkeypatch.setattr(
+        search_module,
+        "attach_signals",
+        lambda data, strategy: data.assign(signal=0, confidence=50),
+    )
+
+    def fake_simulate(data, candidate, **kwargs):
+        first_training_block = data.index[-1] == frame.index[11]
+        return _fake_result(data, trades=0 if first_training_block else 5)
+
+    monkeypatch.setattr(search_module, "_simulate_candidate", fake_simulate)
+    result = search_module.run_strategy_search(
+        symbol="BTC",
+        interval="1h",
+        start_at="2024-01-01",
+        end_at="2024-01-03",
+        templates=["trend_following"],
+        folds=2,
+        min_trades_is=5,
+        grid_preset="coarse",
+        prepared_frame=frame,
+        prepared_max_leverage=5,
+    )
+    assert result["skippedFolds"] == [
+        {"fold": 1, "reason": "No candidate reached minTradesIS=5"}
+    ]
+    assert result["selection"]["skippedFolds"] == result["skippedFolds"]
+    assert len(result["selection"]["selectedFolds"]) == 1
+
+
 def test_work_budget_rejects_large_search():
     with pytest.raises(ValueError, match="coarse preset"):
-        search_module.validate_work_budget(10_000, 120, 4)
+        search_module.validate_work_budget(30_000, 120, 4)
 
 
 def test_search_job_endpoint_lifecycle(monkeypatch, test_client):

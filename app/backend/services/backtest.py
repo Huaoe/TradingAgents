@@ -279,6 +279,7 @@ def _simulate_backtest(
     fee_source: str = "generic_default",
     slippage_source: str = "default",
     max_leverage: int = 3,
+    include_price: bool = True,
 ) -> dict[str, Any]:
     """Simulate a prepared frame and return a dict compatible with ``BacktestResult``."""
     strategy = _load_strategy(strategy or {})
@@ -325,8 +326,17 @@ def _simulate_backtest(
     lowest_price = 0.0
 
     fee_rate = maker_fee if order_type == "maker" else taker_fee + slippage_pct
+    times = list(df.index)
+    opens = df["open"].to_numpy(dtype=float)
+    highs = df["high"].to_numpy(dtype=float)
+    lows = df["low"].to_numpy(dtype=float)
+    closes = df["close"].to_numpy(dtype=float)
+    volumes = df["volume"].to_numpy(dtype=float)
+    signals = df["signal"].to_numpy()
+    confidences = df["confidence"].to_numpy()
+    funding_events = df["fundingEvents"].tolist()
 
-    def mark_equity(current_price: float, current_time: pd.Timestamp, candle: pd.Series) -> None:
+    def mark_equity(current_price: float, current_time: pd.Timestamp, bar_index: int) -> None:
         nonlocal peak
         unrealized = 0.0
         if position != 0 and entry_price:
@@ -340,16 +350,17 @@ def _simulate_backtest(
             peak = total
         dd = (peak - total) / peak if peak > 0 else 0.0
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
-        price_curve.append(
-            {
-                "time": current_time.isoformat(),
-                "open": round(float(candle["open"]), 8),
-                "high": round(float(candle["high"]), 8),
-                "low": round(float(candle["low"]), 8),
-                "close": round(float(current_price), 8),
-                "volume": round(float(candle.get("volume", 0.0)), 8),
-            }
-        )
+        if include_price:
+            price_curve.append(
+                {
+                    "time": current_time.isoformat(),
+                    "open": round(float(opens[bar_index]), 8),
+                    "high": round(float(highs[bar_index]), 8),
+                    "low": round(float(lows[bar_index]), 8),
+                    "close": round(float(current_price), 8),
+                    "volume": round(float(volumes[bar_index]), 8),
+                }
+            )
 
     def open_position(new_position: int, price: float, time: pd.Timestamp, confidence: int) -> None:
         nonlocal \
@@ -441,16 +452,14 @@ def _simulate_backtest(
         highest_price = 0.0
         lowest_price = 0.0
 
-    for i in range(len(df)):
-        row = df.iloc[i]
-        price = row["close"]
-        time = df.index[i]
-        signal = int(row["signal"])
+    for i, time in enumerate(times):
+        price = closes[i]
+        signal = int(signals[i])
 
         # Funding cost for holding the position through this bar.
         if position != 0 and entry_notional:
             funding_cost = 0.0
-            for hourly_rate in row.get("fundingEvents", []):
+            for hourly_rate in funding_events[i]:
                 rate = max(-0.04, min(0.04, _safe_float(hourly_rate)))
                 funding_cost += position * position_size_coin * price * rate
             cash = float(cash - funding_cost)
@@ -459,8 +468,8 @@ def _simulate_backtest(
         protective_exit = None
         protective_price = None
         if position != 0 and i > entry_bar_index:
-            high = float(row["high"])
-            low = float(row["low"])
+            high = highs[i]
+            low = lows[i]
             if position == 1:
                 stop_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct else None
                 target_price = entry_price * (1 + take_profit_pct) if take_profit_pct else None
@@ -520,11 +529,9 @@ def _simulate_backtest(
             can_signal_exit = i - entry_bar_index >= min_hold_bars
             if signal == 0 and exit_hysteresis is not None:
                 if position == 1:
-                    can_signal_exit = can_signal_exit and float(row["confidence"]) < exit_hysteresis
+                    can_signal_exit = can_signal_exit and confidences[i] < exit_hysteresis
                 else:
-                    can_signal_exit = (
-                        can_signal_exit and float(row["confidence"]) > 100 - exit_hysteresis
-                    )
+                    can_signal_exit = can_signal_exit and confidences[i] > 100 - exit_hysteresis
             if can_signal_exit:
                 close_position(price, time, "signal")
 
@@ -533,13 +540,13 @@ def _simulate_backtest(
             and signal != 0
             and (cooldown_bars == 0 or i - last_exit_bar_index > cooldown_bars)
         ):
-            open_position(signal, price, time, int(row["confidence"]))
+            open_position(signal, price, time, int(confidences[i]))
 
-        mark_equity(price, time, row)
+        mark_equity(price, time, i)
 
     # Close any open position at the final close.
     if position != 0:
-        close_position(df["close"].iloc[-1], df.index[-1], "end_of_backtest")
+        close_position(closes[-1], times[-1], "end_of_backtest")
 
     final_equity = float(equity_curve[-1]["equity"]) if equity_curve else float(cash)
     total_return = float(
@@ -577,8 +584,8 @@ def _simulate_backtest(
 
     # Monthly returns heatmap
     monthly: dict[str, float] = defaultdict(float)
-    for pt in equity_curve:
-        ts = pd.to_datetime(pt["time"])
+    for timestamp, pt in zip(times, equity_curve, strict=True):
+        ts = timestamp
         key = f"{ts.year}-{ts.month:02d}"
         monthly[key] = pt["equity"]
     monthly_returns: dict[str, float] = {}
@@ -600,8 +607,10 @@ def _simulate_backtest(
     avg_trade_confidence = float(
         sum(t["confidence"] for t in trades) / len(trades) if trades else 0.0
     )
-    non_flat_signals = df.loc[df["signal"] != 0, "confidence"]
-    avg_signal_confidence = float(non_flat_signals.mean()) if not non_flat_signals.empty else 0.0
+    non_flat_confidences = confidences[signals != 0]
+    avg_signal_confidence = (
+        float(non_flat_confidences.mean()) if len(non_flat_confidences) else 0.0
+    )
 
     summary = {
         "initialBalance": _fmt(initial_balance),

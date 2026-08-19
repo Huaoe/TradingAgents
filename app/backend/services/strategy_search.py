@@ -28,7 +28,7 @@ from backend.services.search_stats import (
 )
 from backend.services.strategy_store import TEMPLATES
 
-WORK_BUDGET = 5_000_000
+WORK_BUDGET = 30_000_000
 _PROTECTIVE_TRIPLES = [
     (0.0, 0.0, 0.0),
     (0.01, 0.02, 0.0),
@@ -169,23 +169,33 @@ def _signal_cache_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _score(result: dict[str, Any], interval: str) -> dict[str, Any]:
+def _score(
+    result: dict[str, Any],
+    interval: str,
+    *,
+    include_returns: bool = False,
+) -> dict[str, Any]:
     equity = [float(point["equity"]) for point in result.get("equity", [])]
     returns = per_bar_returns(equity)
     sharpe = per_bar_sharpe(returns)
+    summary = result.get("summary") or {}
+    trades = int(summary.get("totalTrades", len(result.get("trades", []))))
+    if trades == 0 and sharpe is None:
+        sharpe = 0.0
     annualised = (
         annualise_sharpe(sharpe, _annualization_factor(interval)) if sharpe is not None else None
     )
-    summary = result.get("summary") or {}
-    return {
-        "returns": returns,
+    score = {
         "perBarSharpe": sharpe,
         "annualisedSharpe": annualised,
         "returnPct": float(summary.get("totalReturnPct", 0.0)),
         "benchmarkReturnPct": float(summary.get("benchmarkReturnPct", 0.0)),
-        "trades": int(summary.get("totalTrades", len(result.get("trades", [])))),
+        "trades": trades,
         "maxDrawdownPct": float(summary.get("maxDrawdownPct", 0.0)),
     }
+    if include_returns:
+        score["returns"] = returns
+    return score
 
 
 def _public_score(score: dict[str, Any]) -> dict[str, Any]:
@@ -210,6 +220,7 @@ def _simulate_candidate(
     fee_source: str,
     slippage_source: str,
     max_leverage: int,
+    include_price: bool = True,
 ) -> dict[str, Any]:
     return _simulate_backtest(
         frame,
@@ -224,6 +235,7 @@ def _simulate_candidate(
         fee_source=fee_source,
         slippage_source=slippage_source,
         max_leverage=max_leverage,
+        include_price=include_price,
     )
 
 
@@ -299,6 +311,17 @@ def run_strategy_search(
             signal_cache[key] = attach_signals(frame, candidate["strategy"])
 
     splits = walk_forward_splits(frame, folds)
+    signal_slices: dict[
+        tuple[Any, ...], tuple[pd.DataFrame, list[tuple[pd.DataFrame, pd.DataFrame]]]
+    ] = {}
+    for key, signal_frame in signal_cache.items():
+        signal_slices[key] = (
+            signal_frame,
+            [
+                (signal_frame.loc[train.index], signal_frame.loc[test.index])
+                for train, test in splits
+            ],
+        )
     candidate_records: dict[str, dict[str, Any]] = {
         candidate["id"]: {
             "candidateId": candidate["id"],
@@ -312,7 +335,12 @@ def run_strategy_search(
     completed = 0
     simulation_lock = threading.Lock()
 
-    def run_simulation(candidate: dict[str, Any], data: pd.DataFrame) -> tuple[dict[str, Any], dict[str, Any]]:
+    def run_simulation(
+        candidate: dict[str, Any],
+        data: pd.DataFrame,
+        *,
+        retain_full: bool = False,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]] | None]:
         nonlocal completed
         result = _simulate_candidate(
             data,
@@ -327,33 +355,34 @@ def run_strategy_search(
             fee_source=fee_source,
             slippage_source=slippage_source,
             max_leverage=max_leverage,
+            include_price=False,
         )
-        score = _score(result, interval)
+        score = _score(result, interval, include_returns=retain_full)
+        trades = result.get("trades", []) if retain_full else None
         with simulation_lock:
             completed += 1
             if progress:
                 progress(completed, total)
-        return result, score
+        return score, trades
 
     for candidate in candidates:
         record = candidate_records[candidate["id"]]
-        signal_frame = signal_cache[_signal_cache_key(candidate)]
-        for fold_number, (train, test) in enumerate(splits, start=1):
-            train_result, train_score = run_simulation(candidate, signal_frame.loc[train.index])
-            test_result, test_score = run_simulation(candidate, signal_frame.loc[test.index])
+        signal_frame, fold_slices = signal_slices[_signal_cache_key(candidate)]
+        for fold_number, (train, test) in enumerate(fold_slices, start=1):
+            train_score, _ = run_simulation(candidate, train)
+            test_score, _ = run_simulation(candidate, test)
             record["folds"].append(
                 {
                     "fold": fold_number,
                     "inSample": train_score,
                     "outOfSample": test_score,
-                    "_inSampleResult": train_result,
-                    "_outOfSampleResult": test_result,
                 }
             )
-        full_result, full_score = run_simulation(candidate, signal_frame)
-        record["full"] = {"result": full_result, "score": full_score}
+        full_score, full_trades = run_simulation(candidate, signal_frame, retain_full=True)
+        record["full"] = {"score": full_score, "trades": full_trades or []}
 
     selected_folds = []
+    skipped_folds = []
     selected_oos_returns: list[float] = []
     buy_hold_returns: list[float] = []
     for fold_number in range(1, folds + 1):
@@ -363,7 +392,13 @@ def run_strategy_search(
             if record["folds"][fold_number - 1]["inSample"]["trades"] >= min_trades_is
         ]
         if not eligible:
-            raise ValueError(f"No candidate reached minTradesIS={min_trades_is} on fold {fold_number}")
+            skipped_folds.append(
+                {
+                    "fold": fold_number,
+                    "reason": f"No candidate reached minTradesIS={min_trades_is}",
+                }
+            )
+            continue
         selected = max(
             eligible,
             key=lambda record: (
@@ -390,11 +425,18 @@ def run_strategy_search(
     candidate_summaries = []
     for record in candidate_records.values():
         folds_data = record["folds"]
-        is_sharpes = [fold["inSample"]["perBarSharpe"] for fold in folds_data]
-        oos_sharpes = [fold["outOfSample"]["perBarSharpe"] for fold in folds_data]
+
+        def fold_sharpe(score: dict[str, Any]) -> float:
+            value = score["perBarSharpe"]
+            if score["trades"] == 0 or value is None or not math.isfinite(value):
+                return 0.0
+            return float(value)
+
+        is_sharpes = [fold_sharpe(fold["inSample"]) for fold in folds_data]
+        oos_sharpes = [fold_sharpe(fold["outOfSample"]) for fold in folds_data]
         oos_returns = [fold["outOfSample"]["returnPct"] for fold in folds_data]
-        valid_is = [float(value) for value in is_sharpes if value is not None]
-        valid_oos = [float(value) for value in oos_sharpes if value is not None]
+        valid_is = [float(value) for value in is_sharpes]
+        valid_oos = [float(value) for value in oos_sharpes]
         full_score = record["full"]["score"]
         candidate_summaries.append(
             {
@@ -420,6 +462,9 @@ def run_strategy_search(
                 "medianOutOfSampleReturnPct": float(pd.Series(oos_returns).median()),
                 "totalOutOfSampleTrades": sum(
                     fold["outOfSample"]["trades"] for fold in folds_data
+                ),
+                "foldsWithTrades": sum(
+                    1 for fold in folds_data if fold["outOfSample"]["trades"] > 0
                 ),
                 "worstFold": min(
                     (
@@ -451,8 +496,8 @@ def run_strategy_search(
                     "perBarSharpe": full_score["perBarSharpe"],
                     "annualisedSharpe": full_score["annualisedSharpe"],
                 },
-                "_meanInSample": float(pd.Series(valid_is).mean()) if valid_is else 0.0,
-                "_meanOutOfSample": float(pd.Series(valid_oos).mean()) if valid_oos else 0.0,
+                "_meanInSample": float(pd.Series(valid_is).mean()),
+                "_meanOutOfSample": float(pd.Series(valid_oos).mean()),
             }
         )
 
@@ -494,12 +539,12 @@ def run_strategy_search(
         if candidate_id in seen_ids:
             continue
         seen_ids.add(candidate_id)
-        full_result = candidate_records[candidate_id]["full"]["result"]
+        full_trades = candidate_records[candidate_id]["full"]["trades"]
         regime_breakdown.append(
             {
                 "candidateId": candidate_id,
                 "template": candidate_summary["template"],
-                "regimes": summarise_trades_by_regime(full_result["trades"], regimes),
+                "regimes": summarise_trades_by_regime(full_trades, regimes),
             }
         )
 
@@ -518,8 +563,12 @@ def run_strategy_search(
         "selection": {
             "returnPct": selection_return,
             "buyAndHoldReturnPct": buy_hold_return,
+            "foldsConsidered": len(selected_folds),
+            "foldsSkipped": len(skipped_folds),
             "selectedFolds": selected_folds,
+            "skippedFolds": skipped_folds,
         },
+        "skippedFolds": skipped_folds,
         "candidates": candidate_summaries,
         "rankCorrelation": rank_corr,
         "fullRangeWinner": {

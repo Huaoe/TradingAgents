@@ -53,6 +53,7 @@ def test_run_backtest_returns_expected_summary_and_curves(mock_hyperliquid_clien
     assert "price" in result
     assert "trades" in result
     assert "monthlyReturns" in result
+    assert result["monthlyReturns"] == {"2024-01": 0.0}
 
     summary = result["summary"]
     for key in [
