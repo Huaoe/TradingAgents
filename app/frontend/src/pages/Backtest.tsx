@@ -316,7 +316,7 @@ export function Backtest() {
     setEstimatingSlippage(true);
     try {
       const estimate = await fetchSlippageEstimate(symbol.toUpperCase(), notional);
-      setSlippagePct(estimate.slippagePct);
+      setSlippagePct(Number(estimate.slippagePct.toFixed(8)));
       setSlippageSource('live_book');
     } catch {
       setError('Live-book slippage estimate unavailable; keeping the current value.');
