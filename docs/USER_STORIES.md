@@ -488,7 +488,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 21: Execution Parity & Controls *(In progress)*
+## Epic 21: Execution Parity & Controls *(Done — PR #20)*
 
 ### US-21.1 Have my stop-loss actually apply when I trade
 **As a** trader, **I want** the stop-loss, take-profit and trailing stop I configured to be enforced when I trade, **so that** a live or paper run implements the strategy I backtested rather than an unmanaged version of it.
@@ -531,7 +531,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 22: Limit Orders & Scheduling
+## Epic 22: Limit Orders & Scheduling *(In progress)*
 
 ### US-22.1 Trade at maker cost
 **As a** trader, **I want** limit orders with a resting-order lifecycle, **so that** the maker-cost results the funding templates depend on are reachable in reality.
@@ -539,6 +539,8 @@ Acceptance criteria use:
 **Acceptance Criteria**
 - Given a limit order, when it rests, partially fills, or is cancelled, then local state matches the exchange at each step.
 - Given an unfilled order, when reconciliation runs, then it is reported rather than assumed filled.
+- Given a post-only order priced so it would cross the book, when I submit it, then it is rejected rather than silently filled as a taker.
+- Given a filled maker order, when the fee is recorded, then it is the maker rate, not the taker rate.
 
 ### US-22.2 Let a strategy run unattended
 **As a** trader, **I want** a strategy to run on its schedule and execute according to its execution mode, **so that** the app trades without me pressing buttons.
@@ -547,3 +549,12 @@ Acceptance criteria use:
 - Given a strategy with a schedule and `executionMode: auto`, when the schedule elapses, then a signal is generated and executed in paper mode.
 - Given I pause or stop the strategy, when the schedule next elapses, then nothing is generated or executed.
 - Given live automation, when it is attempted without an unlocked session key, then it is refused with an explicit reason rather than storing the master password.
+
+### US-22.3 Not be misled about a resting order
+**As a** trader, **I want** the assumptions behind a resting order stated where I see the order, **so that** I do not read a simulated maker fill as evidence a real one would have happened.
+
+**Acceptance Criteria**
+- Given a paper resting order, when I view it, then it says the fill assumes no queue position.
+- Given a live limit order that fills while I am away, when the position appears, then it says the protective triggers could not be signed and the position is unprotected.
+- Given a live resting order past its expiry, when the monitor runs, then it alerts for manual cancellation instead of pretending it was cancelled.
+- Given resting orders, when a risk guardrail is checked, then their unfilled notional counts toward exposure.

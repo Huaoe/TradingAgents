@@ -44,7 +44,7 @@ export interface CancelExchangeOrderInput {
   walletId: string;
   symbol: string;
   orderId: string;
-  masterPassword: string;
+  masterPassword?: string;
 }
 
 export async function cancelExchangeOrder(input: CancelExchangeOrderInput): Promise<Record<string, unknown>> {
@@ -95,6 +95,10 @@ export interface ExecuteInput {
   walletId: string;
   mode?: 'paper' | 'live';
   masterPassword?: string;
+  orderType?: 'market' | 'limit';
+  limitPrice?: number;
+  tif?: 'Alo' | 'Gtc' | 'Ioc';
+  expireMinutes?: number;
 }
 
 export async function executeSignal(input: ExecuteInput): Promise<{ order: Order; position: Position | null }> {
@@ -102,6 +106,15 @@ export async function executeSignal(input: ExecuteInput): Promise<{ order: Order
     method: 'POST',
     body: JSON.stringify(input),
   });
+}
+
+export interface OrderBook {
+  bid?: { avgPrice?: number | string; top?: Array<{ price?: number | string }> };
+  ask?: { avgPrice?: number | string; top?: Array<{ price?: number | string }> };
+}
+
+export async function fetchOrderbook(symbol: string): Promise<OrderBook> {
+  return api<OrderBook>(`/api/orderbook/${encodeURIComponent(symbol)}`);
 }
 
 export interface ClosePositionInput {

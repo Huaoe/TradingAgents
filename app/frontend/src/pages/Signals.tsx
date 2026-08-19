@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Check, X, Bot, Loader2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { Card, Badge } from '../components/Card';
 import { ExecuteModal } from '../components/ExecuteModal';
-import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal, executeSignal } from '../services/api';
+import { fetchSignals, fetchStrategies, createSignal, acceptSignal, rejectSignal, deleteSignal, executeSignal, fetchOrderbook } from '../services/api';
 import { useWallet } from '../context/useWallet';
 import type { Signal, Strategy } from '../types';
 
@@ -20,6 +20,24 @@ export function Signals() {
   const [masterPassword, setMasterPassword] = useState('');
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState('');
+  const [orderType, setOrderType] = useState<'market' | 'limit'>('market');
+  const [limitPrice, setLimitPrice] = useState('');
+  const [tif, setTif] = useState<'Alo' | 'Gtc' | 'Ioc'>('Alo');
+  const [expireMinutes, setExpireMinutes] = useState('');
+  const [orderBookLoading, setOrderBookLoading] = useState(false);
+
+  useEffect(() => {
+    if (!pendingSignal || orderType !== 'limit') return;
+    setOrderBookLoading(true);
+    fetchOrderbook(pendingSignal.symbol)
+      .then((book) => {
+        const side = pendingSignal.action === 'BUY' ? book.bid : book.ask;
+        const topPrice = side?.top?.[0]?.price ?? side?.avgPrice;
+        if (topPrice !== undefined && topPrice !== null) setLimitPrice(String(topPrice));
+      })
+      .catch(() => setModalError('Could not load the live order book; enter a limit price manually.'))
+      .finally(() => setOrderBookLoading(false));
+  }, [pendingSignal, orderType]);
 
   useEffect(() => {
     refresh();
@@ -57,13 +75,13 @@ export function Signals() {
       setError('Select an active wallet before accepting a signal');
       return;
     }
-    if (mode === 'live') {
-      setPendingSignal(signal);
-      setModalError('');
-      setMasterPassword('');
-    } else {
-      executeAccepted(signal);
-    }
+    setPendingSignal(signal);
+    setModalError('');
+    setMasterPassword('');
+    setOrderType('market');
+    setLimitPrice('');
+    setTif('Alo');
+    setExpireMinutes('');
   };
 
   const executeAccepted = async (signal: Signal, livePassword = '') => {
@@ -76,6 +94,10 @@ export function Signals() {
         walletId: selectedWallet!.id,
         mode,
         masterPassword: livePassword || undefined,
+        orderType,
+        limitPrice: orderType === 'limit' && limitPrice ? Number(limitPrice) : undefined,
+        tif: orderType === 'limit' ? tif : undefined,
+        expireMinutes: orderType === 'limit' && expireMinutes ? Number(expireMinutes) : undefined,
       });
       setSignals((prev) => prev.map((s) => (s.id === signal.id ? { ...s, status: 'accepted' as const } : s)));
       setPendingSignal(null);
@@ -95,6 +117,14 @@ export function Signals() {
     if (!pendingSignal) return;
     if (mode === 'live' && !masterPassword) {
       setModalError('Master password is required for live execution');
+      return;
+    }
+    if (orderType === 'limit' && (!limitPrice || !Number.isFinite(Number(limitPrice)) || Number(limitPrice) <= 0)) {
+      setModalError('A positive limit price is required');
+      return;
+    }
+    if (orderType === 'limit' && expireMinutes && (!Number.isFinite(Number(expireMinutes)) || Number(expireMinutes) <= 0)) {
+      setModalError('Expiry must be a positive number of minutes');
       return;
     }
     executeAccepted(pendingSignal, masterPassword);
@@ -282,6 +312,15 @@ export function Signals() {
         signal={pendingSignal}
         wallet={selectedWallet}
         mode={mode}
+        orderType={orderType}
+        setOrderType={setOrderType}
+        limitPrice={limitPrice}
+        setLimitPrice={setLimitPrice}
+        tif={tif}
+        setTif={setTif}
+        expireMinutes={expireMinutes}
+        setExpireMinutes={setExpireMinutes}
+        orderBookLoading={orderBookLoading}
         masterPassword={masterPassword}
         setMasterPassword={setMasterPassword}
         loading={modalLoading}

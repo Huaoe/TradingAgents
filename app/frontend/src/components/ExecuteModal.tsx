@@ -6,6 +6,15 @@ interface ExecuteModalProps {
   signal: Signal | null;
   wallet: Wallet | null;
   mode: 'paper' | 'live';
+  orderType: 'market' | 'limit';
+  setOrderType: (value: 'market' | 'limit') => void;
+  limitPrice: string;
+  setLimitPrice: (value: string) => void;
+  tif: 'Alo' | 'Gtc' | 'Ioc';
+  setTif: (value: 'Alo' | 'Gtc' | 'Ioc') => void;
+  expireMinutes: string;
+  setExpireMinutes: (value: string) => void;
+  orderBookLoading: boolean;
   masterPassword: string;
   setMasterPassword: (value: string) => void;
   loading: boolean;
@@ -19,6 +28,15 @@ export function ExecuteModal({
   signal,
   wallet,
   mode,
+  orderType,
+  setOrderType,
+  limitPrice,
+  setLimitPrice,
+  tif,
+  setTif,
+  expireMinutes,
+  setExpireMinutes,
+  orderBookLoading,
   masterPassword,
   setMasterPassword,
   loading,
@@ -65,6 +83,70 @@ export function ExecuteModal({
           </div>
         </div>
 
+        <div className="space-y-3 mb-5">
+          <div>
+            <label className="block text-xs font-medium text-gray-400 mb-1">Order type</label>
+            <select
+              value={orderType}
+              onChange={(event) => setOrderType(event.target.value as 'market' | 'limit')}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            >
+              <option value="market">Market</option>
+              <option value="limit">Limit / maker</option>
+            </select>
+          </div>
+          {orderType === 'limit' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">
+                  Limit price {orderBookLoading && '(loading book...)'}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={limitPrice}
+                  onChange={(event) => setLimitPrice(event.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                  placeholder="Best bid/ask"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Time in force</label>
+                <select
+                  value={tif}
+                  onChange={(event) => setTif(event.target.value as 'Alo' | 'Gtc' | 'Ioc')}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                >
+                  <option value="Alo">Alo — post-only / maker</option>
+                  <option value="Gtc">Gtc — rest until cancelled</option>
+                  <option value="Ioc">Ioc — fill now or cancel</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1">Expiry (minutes, optional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={expireMinutes}
+                  onChange={(event) => setExpireMinutes(event.target.value)}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                  placeholder="No expiry"
+                />
+              </div>
+              <p className="text-xs text-sky-300">
+                Post-only orders rest to seek the maker fee. A crossing Alo price is rejected; paper fills at the limit when the mark touches it, with no queue model.
+              </p>
+              {mode === 'live' && (
+                <p className="text-xs text-amber-300">
+                  If a live limit order fills while unattended, protective triggers cannot be signed from the monitor and the resulting position will be marked unprotected.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+
         {mode === 'live' && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-400 mb-1">Master Password</label>
@@ -101,7 +183,7 @@ export function ExecuteModal({
             }`}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {mode === 'live' ? 'Execute Live' : 'Execute Paper'}
+            {orderType === 'limit' ? 'Place Limit Order' : mode === 'live' ? 'Execute Live' : 'Execute Paper'}
           </button>
         </div>
       </div>

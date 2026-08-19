@@ -121,8 +121,13 @@ def test_position_mode_migrates_and_backfills_from_originating_order():
     conn.close()
 
     position = ExecutionStore().get_position("pos-live")
+    order = ExecutionStore().get_order("ord-live")
 
     assert position is not None
+    assert order is not None
+    assert order["filledSize"] == 0.0
+    assert order["limitPrice"] is None
+    assert order["exchangeOrderId"] is None
     assert position["mode"] == "live"
     assert position["protectiveStatus"] == "disabled"
     assert position["stopPrice"] is None

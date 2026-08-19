@@ -151,7 +151,11 @@ class MockHyperliquidClient:
         return self.orderbook
 
     def get_user_fees(self, address: str) -> dict[str, Any]:
-        return {"address": address, "makerFee": 0.00015, "takerFee": 0.00045}
+        return {
+            "address": address,
+            "makerFee": float(self.user_fees["userAddRate"]),
+            "takerFee": float(self.user_fees["userCrossRate"]),
+        }
 
     def estimate_slippage(self, symbol: str, notional: float) -> float:
         return 0.00005

@@ -2,13 +2,528 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
 
 import backend.services.execution_engine as execution_engine_module
 from backend.services.execution_engine import ExecutionEngine, _set_live_leverage
+from backend.services.execution_store import ExecutionStore
 from backend.services.protective import evaluate_protective_exit, protective_levels
+
+
+def _signal(signal_id: str = "sig-limit", action: str = "BUY") -> dict:
+    return {
+        "id": signal_id,
+        "symbol": "BTC",
+        "action": action,
+        "confidence": 80,
+        "size": 100.0,
+        "entry": 100.0,
+        "stop": 0.0,
+        "target": 0.0,
+        "leverage": 2,
+        "reasoning": "test",
+        "agents": [],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "meta": {"riskConfig": {}},
+    }
+
+
+def _execution_engine_with_signal(
+    signal: dict,
+    mock_hyperliquid_client,
+) -> ExecutionEngine:
+    engine = ExecutionEngine()
+    engine.signal_store.store_signal(signal)
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.portfolio_engine = SimpleNamespace(
+        can_open_position=lambda *args: None,
+    )
+    return engine
+
+
+def test_limit_placement_rests_without_position(isolated_stores, mock_hyperliquid_client):
+    engine = _execution_engine_with_signal(_signal(), mock_hyperliquid_client)
+
+    result = engine.execute(
+        "sig-limit",
+        "wallet-paper",
+        mode="paper",
+        order_type="limit",
+        limit_price=99.0,
+    )
+
+    assert result["position"] is None
+    assert result["order"]["status"] == "resting"
+    assert result["order"]["type"] == "Limit"
+    assert result["order"]["limitPrice"] == 99.0
+    assert ExecutionStore().list_open_positions() == []
+
+
+def test_market_execution_still_fills_and_opens_position(
+    isolated_stores, mock_hyperliquid_client
+):
+    engine = _execution_engine_with_signal(_signal("sig-market"), mock_hyperliquid_client)
+
+    result = engine.execute("sig-market", "wallet-paper")
+
+    assert result["order"]["type"] == "Market"
+    assert result["order"]["status"] == "filled"
+    assert result["position"]["status"] == "open"
+    assert result["position"]["size"] == pytest.approx(1.0)
+    stored_order = ExecutionStore().get_order(result["order"]["id"])
+    assert stored_order is not None
+    assert stored_order["filledSize"] == pytest.approx(stored_order["size"])
+
+
+def test_immediate_limit_fill_persists_filled_size(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def update_leverage(self, leverage, symbol, is_cross):
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            return {
+                "status": "ok",
+                "response": {
+                    "data": {
+                        "statuses": [
+                            {"filled": {"oid": 93, "avgPx": "99", "totalSz": "1.0"}}
+                        ]
+                    }
+                },
+            }
+
+    signal = _signal("sig-immediate-limit")
+    signal["size"] = 99.0
+    engine = _execution_engine_with_signal(signal, mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+    monkeypatch.setattr(
+        execution_engine_module,
+        "_live_exchange",
+        lambda wallet, key: FakeExchange(),
+    )
+    engine.wallet_store.decrypt_private_key = lambda wallet_id, password: "private"
+
+    result = engine.execute(
+        "sig-immediate-limit",
+        "wallet-live",
+        mode="live",
+        master_password="password",
+        order_type="limit",
+        limit_price=99.0,
+        tif="Ioc",
+    )
+
+    stored_order = ExecutionStore().get_order(result["order"]["id"])
+    assert stored_order is not None
+    assert stored_order["status"] == "filled"
+    assert stored_order["filledSize"] == pytest.approx(stored_order["size"])
+
+
+def test_paper_limit_fill_uses_maker_fee_at_limit(
+    isolated_stores, mock_hyperliquid_client
+):
+    mock_hyperliquid_client.user_fees["userAddRate"] = "0.00010"
+    mock_hyperliquid_client.user_fees["userCrossRate"] = "0.00090"
+    engine = _execution_engine_with_signal(
+        _signal("sig-maker"),
+        mock_hyperliquid_client,
+    )
+    result = engine.execute(
+        "sig-maker",
+        "wallet-paper",
+        order_type="limit",
+        limit_price=99.0,
+    )
+    mock_hyperliquid_client.market["markPrice"] = 99.0
+    mock_hyperliquid_client.market["price"] = 99.0
+
+    engine.refresh_positions()
+
+    order = ExecutionStore().get_order(result["order"]["id"])
+    position = ExecutionStore().list_open_positions()[0]
+    assert order is not None
+    assert order["status"] == "filled"
+    assert order["fees"] == pytest.approx(100.0 / 99.0 * 99.0 * 0.00010)
+    assert order["fees"] != pytest.approx(100.0 * 0.00090)
+    assert position["entryPrice"] == pytest.approx(99.0)
+    assert order["meta"]["queueModelled"] is False
+
+
+@pytest.mark.parametrize("mode", ["paper", "live"])
+def test_crossing_alo_limit_is_rejected(
+    monkeypatch, isolated_stores, mock_hyperliquid_client, mode
+):
+    engine = _execution_engine_with_signal(_signal(f"sig-cross-{mode}"), mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+
+    with pytest.raises(ValueError, match="would cross"):
+        engine.execute(
+            f"sig-cross-{mode}",
+            "wallet-test",
+            mode=mode,
+            order_type="limit",
+            limit_price=101.0,
+        )
+
+
+def test_live_partial_fill_creates_position_and_keeps_order_pending(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def update_leverage(self, leverage, symbol, is_cross):
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"resting": {"oid": 77}}]}},
+            }
+
+    mock_hyperliquid_client.open_orders = [{"oid": 77, "coin": "BTC"}]
+    mock_hyperliquid_client.fills = [
+        {"oid": 77, "px": "99", "sz": "0.5", "fee": "0.01"}
+    ]
+    engine = _execution_engine_with_signal(_signal("sig-partial"), mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+    monkeypatch.setattr(
+        execution_engine_module,
+        "_live_exchange",
+        lambda wallet, key: FakeExchange(),
+    )
+    engine.wallet_store.decrypt_private_key = lambda wallet_id, password: "private"
+
+    result = engine.execute(
+        "sig-partial",
+        "wallet-live",
+        mode="live",
+        master_password="password",
+        order_type="limit",
+        limit_price=99.0,
+    )
+    engine.refresh_positions()
+
+    order = ExecutionStore().get_order(result["order"]["id"])
+    positions = ExecutionStore().list_open_positions()
+    assert order is not None
+    assert order["status"] == "partially_filled"
+    assert order["filledSize"] == pytest.approx(0.5)
+    assert positions[0]["size"] == pytest.approx(0.5)
+
+
+def test_live_partial_fill_batches_aggregate_one_weighted_position(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def update_leverage(self, leverage, symbol, is_cross):
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"resting": {"oid": 79}}]}},
+            }
+
+    batches = iter(
+        [
+            [{"oid": 79, "px": "99", "sz": "0.4", "fee": "0.01"}],
+            [
+                {"oid": 79, "px": "99", "sz": "0.4", "fee": "0.01"},
+                {"oid": 79, "px": "101", "sz": "0.6", "fee": "0.02"},
+            ],
+        ]
+    )
+    mock_hyperliquid_client.open_orders = [{"oid": 79, "coin": "BTC"}]
+    monkeypatch.setattr(
+        mock_hyperliquid_client,
+        "get_user_fills",
+        lambda address, force=False: next(batches),
+    )
+    signal = _signal("sig-batched")
+    signal["size"] = 99.0
+    signal["meta"]["riskConfig"] = {
+        "stopLossPct": 0.05,
+        "takeProfitPct": 0.05,
+    }
+    engine = _execution_engine_with_signal(signal, mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+    monkeypatch.setattr(
+        execution_engine_module,
+        "_live_exchange",
+        lambda wallet, key: FakeExchange(),
+    )
+    engine.wallet_store.decrypt_private_key = lambda wallet_id, password: "private"
+
+    result = engine.execute(
+        "sig-batched",
+        "wallet-live",
+        mode="live",
+        master_password="password",
+        order_type="limit",
+        limit_price=99.0,
+    )
+    engine.refresh_positions()
+    engine.refresh_positions()
+
+    order = ExecutionStore().get_order(result["order"]["id"])
+    positions = ExecutionStore().list_open_positions()
+    assert order is not None
+    assert order["filledSize"] == pytest.approx(1.0)
+    assert order["status"] == "filled"
+    assert len(positions) == 1
+    assert positions[0]["size"] == pytest.approx(1.0)
+    assert positions[0]["entryPrice"] == pytest.approx(99.72)
+    assert positions[0]["protectiveStatus"] == "unprotected"
+
+
+def test_live_partial_fill_preserves_armed_protection_and_alerts(
+    isolated_stores, mock_hyperliquid_client
+):
+    store = ExecutionStore()
+    order = {
+        "id": "ord-armed-partial",
+        "signalId": "sig-armed-partial",
+        "walletId": "wallet-live",
+        "symbol": "BTC",
+        "side": "Buy",
+        "size": 1.0,
+        "price": 99.0,
+        "notional": 99.0,
+        "leverage": 2,
+        "fees": 0.0,
+        "type": "Limit",
+        "mode": "live",
+        "status": "partially_filled",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "meta": {},
+        "limitPrice": 99.0,
+        "tif": "Gtc",
+        "filledSize": 0.4,
+        "exchangeOrderId": "90",
+    }
+    store.create_order(order)
+    store.create_position(
+        {
+            "id": "pos-armed-partial",
+            "orderId": order["id"],
+            "walletId": order["walletId"],
+            "symbol": "BTC",
+            "side": "Buy",
+            "entryPrice": 99.0,
+            "markPrice": 99.0,
+            "size": 0.4,
+            "notional": 39.6,
+            "leverage": 2,
+            "pnl": 0.0,
+            "pnlPct": 0.0,
+            "liquidationPrice": 49.5,
+            "margin": 19.8,
+            "status": "open",
+            "mode": "live",
+            "stopPrice": 95.0,
+            "takeProfitPrice": 105.0,
+            "trailingStopPct": 0.01,
+            "trailingWatermark": 99.0,
+            "exitReason": None,
+            "protectiveStatus": "armed",
+            "exchangeStopOrderId": "91",
+            "exchangeTakeProfitOrderId": "92",
+            "trailingUnsupported": False,
+            "openedAt": datetime.now(timezone.utc).isoformat(),
+            "closedAt": None,
+        }
+    )
+    alerts = []
+    engine = ExecutionEngine()
+    engine.store = store
+    engine.client = mock_hyperliquid_client
+    engine.alert_engine = SimpleNamespace(
+        execution_divergence=lambda *args: alerts.append(args),
+    )
+    wallet = SimpleNamespace(address="0xabc")
+
+    engine._settle_pending_fill(
+        order,
+        wallet,
+        fill_price=101.0,
+        filled_size=0.6,
+        fees=0.0,
+        risk_config={
+            "stopLossPct": 0.05,
+            "takeProfitPct": 0.05,
+            "trailingStopPct": 0.01,
+        },
+    )
+
+    position = store.get_position("pos-armed-partial")
+    assert position is not None
+    assert position["size"] == pytest.approx(1.0)
+    assert position["entryPrice"] == pytest.approx(100.2)
+    assert position["stopPrice"] == pytest.approx(95.0)
+    assert position["takeProfitPrice"] == pytest.approx(105.0)
+    assert position["trailingStopPct"] == pytest.approx(0.01)
+    assert position["trailingWatermark"] == pytest.approx(99.0)
+    assert position["protectiveStatus"] == "unprotected"
+    assert position["exchangeStopOrderId"] == "91"
+    assert position["exchangeTakeProfitOrderId"] == "92"
+    assert len(alerts) == 1
+    assert "cover only part of the position" in alerts[0][0]
+    assert "manual re-arming is required" in alerts[0][0]
+
+
+def test_live_pending_monitor_reads_exchange_once_per_wallet(
+    monkeypatch, mock_hyperliquid_client
+):
+    orders = [
+        {
+            "id": "ord-wallet-a",
+            "walletId": "wallet-live",
+            "symbol": "BTC",
+            "size": 1.0,
+            "price": 99.0,
+            "status": "resting",
+            "mode": "live",
+            "exchangeOrderId": "80",
+            "filledSize": 0.0,
+            "meta": {},
+        },
+        {
+            "id": "ord-wallet-b",
+            "walletId": "wallet-live",
+            "symbol": "ETH",
+            "size": 1.0,
+            "price": 99.0,
+            "status": "resting",
+            "mode": "live",
+            "exchangeOrderId": "81",
+            "filledSize": 0.0,
+            "meta": {},
+        },
+    ]
+    calls = {"open": 0, "fills": 0}
+    engine = ExecutionEngine()
+    engine.store = SimpleNamespace(
+        list_pending_orders=lambda: orders,
+        update_order=lambda order: order,
+    )
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.alert_engine = SimpleNamespace()
+
+    def open_orders(address, force=False):
+        calls["open"] += 1
+        return [{"oid": 80}, {"oid": 81}]
+
+    def user_fills(address, force=False):
+        calls["fills"] += 1
+        return []
+
+    monkeypatch.setattr(engine.client, "get_open_orders", open_orders)
+    monkeypatch.setattr(engine.client, "get_user_fills", user_fills)
+
+    engine._monitor_pending_orders()
+
+    assert calls == {"open": 1, "fills": 1}
+
+
+def test_vanished_live_limit_order_is_cancelled_without_position(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def update_leverage(self, leverage, symbol, is_cross):
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"resting": {"oid": 78}}]}},
+            }
+
+    engine = _execution_engine_with_signal(_signal("sig-vanished"), mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+    monkeypatch.setattr(
+        execution_engine_module,
+        "_live_exchange",
+        lambda wallet, key: FakeExchange(),
+    )
+    engine.wallet_store.decrypt_private_key = lambda wallet_id, password: "private"
+    result = engine.execute(
+        "sig-vanished",
+        "wallet-live",
+        mode="live",
+        master_password="password",
+        order_type="limit",
+        limit_price=99.0,
+    )
+    mock_hyperliquid_client.open_orders = []
+    mock_hyperliquid_client.fills = []
+
+    engine.refresh_positions()
+
+    order = ExecutionStore().get_order(result["order"]["id"])
+    assert order is not None
+    assert order["status"] == "cancelled"
+    assert ExecutionStore().list_open_positions() == []
+
+
+def test_paper_limit_expiry_marks_order_expired(
+    isolated_stores, mock_hyperliquid_client
+):
+    engine = _execution_engine_with_signal(_signal("sig-expiry"), mock_hyperliquid_client)
+    result = engine.execute(
+        "sig-expiry",
+        "wallet-paper",
+        order_type="limit",
+        limit_price=99.0,
+        expire_minutes=5,
+    )
+    order = ExecutionStore().get_order(result["order"]["id"])
+    assert order is not None
+    order["expiresAt"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    ExecutionStore().update_order(order)
+
+    engine.refresh_positions()
+
+    assert ExecutionStore().get_order(order["id"])["status"] == "expired"
+
+
+def test_pending_exposure_causes_guardrail_rejection(
+    isolated_stores, mock_hyperliquid_client
+):
+    store = ExecutionStore()
+    store.create_order(
+        {
+            **_signal("pending-source"),
+            "walletId": "wallet-risk",
+            "side": "Buy",
+            "price": 99.0,
+            "notional": 4900.0,
+            "fees": 0.0,
+            "type": "Limit",
+            "mode": "paper",
+            "status": "resting",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "limitPrice": 99.0,
+            "filledSize": 0.0,
+        }
+    )
+    from backend.services.portfolio_engine import PortfolioEngine
+
+    with pytest.raises(ValueError, match="pending orders"):
+        PortfolioEngine().can_open_position(
+            "wallet-risk",
+            "BTC",
+            200.0,
+            2,
+            {"maxTotalExposure": 5000.0},
+        )
 
 
 def test_protective_levels_match_backtest_decimal_percentages():
@@ -475,6 +990,9 @@ def test_kill_switch_continues_after_one_position_failure(
     monkeypatch, isolated_stores, mock_hyperliquid_client
 ):
     class FakeStore:
+        def list_pending_orders(self, wallet_id, mode):
+            return []
+
         def list_open_positions(self, wallet_id):
             return [
                 {"id": "pos-1", "mode": "paper", "status": "open"},
@@ -506,3 +1024,44 @@ def test_kill_switch_continues_after_one_position_failure(
     assert calls == ["disable", "pos-1", "pos-2"]
     assert [item["status"] for item in result["positions"]] == ["error", "closed"]
     assert result["liveEnabled"] is False
+
+
+def test_kill_switch_settles_local_paper_limit_orders(
+    isolated_stores, mock_hyperliquid_client
+):
+    store = ExecutionStore()
+    store.create_order(
+        {
+            "id": "ord-kill-paper",
+            "walletId": "wallet-kill",
+            "symbol": "BTC",
+            "side": "Buy",
+            "size": 1.0,
+            "price": 99.0,
+            "notional": 99.0,
+            "leverage": 2,
+            "fees": 0.0,
+            "type": "Limit",
+            "mode": "paper",
+            "status": "resting",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "limitPrice": 99.0,
+        }
+    )
+    calls = []
+    engine = ExecutionEngine()
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.portfolio_engine = SimpleNamespace(
+        portfolio_store=SimpleNamespace(
+            set_live_enabled=lambda wallet_id, enabled: calls.append("disable"),
+        ),
+    )
+    engine.alert_engine = SimpleNamespace(kill_switch=lambda *args: None)
+
+    result = engine.kill_switch("wallet-kill", "paper")
+
+    assert calls == ["disable"]
+    assert result["orders"][0]["status"] == "cancelled"
+    assert store.get_order("ord-kill-paper")["status"] == "cancelled"

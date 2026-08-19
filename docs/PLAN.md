@@ -33,13 +33,15 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 13 — Security Remediation | Epic 17 | Deferred by the owner — the app runs on a single local machine, so exposure is judged acceptable. Still blocks any hosted or shared deployment. |
 | Sprint 14 — Live-Trading Readiness | Epic 18 | Done except the testnet soak (merged in PR #19; measured live fills/fees/funding, paper/live separation, read-only reconciliation, real health probes) |
 | Sprint 15 — Research Depth & Frontend Debt | Epics 19–20 | Not started |
-| Sprint 16 — Execution Parity & Controls | Epic 21 | In progress |
+| Sprint 16 — Execution Parity & Controls | Epic 21 | Done (merged in PR #20) |
+| Sprint 17 — Limit/Maker Orders | Epic 22 (part 1) | In progress |
+| Sprint 18 — Strategy Scheduling | Epic 22 (part 2) | Not started |
 
 ---
 
 ## Current State (2026-08-19)
 
-`main` is at `696bb9f`. 85 backend tests pass; `ruff check`, `npm run lint`, `tsc --noEmit` and `npm run build` are clean.
+`main` is at `2a359ce`. 96 backend tests pass; `ruff check`, `npm run lint`, `tsc --noEmit` and `npm run build` are clean.
 
 **What works end to end:** market scanner, strategy library, backtest lab, multi-wallet storage, signal generation through `TradingAgentsGraph`, paper execution, portfolio/positions, alerts, and the Strategy Finder.
 
@@ -52,9 +54,11 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 **What Sprint 14 changed (PR #19):** live PnL, fees and funding are read back from `userFills` and the funding history instead of being assumed from a fee constant; paper and live balances are separated so a live fill no longer moves the simulated balance; a read-only reconciler compares local live positions against `clearinghouseState` and reports divergences instead of silently "fixing" them; `/api/health` probes every SQLite store and the Info API. Not yet true: none of this has been exercised against a real live order, and the net-PnL formula assumes Hyperliquid's `closedPnl` is gross of fees (recorded as `netPnlBasis` in the order meta) — the first real live close must be checked against the Hyperliquid UI.
 
-**The parity gap Sprint 16 addresses:** `stopLossPct`, `takeProfitPct` and `trailingStopPct` were honoured only by the backtest engine and the Strategy Finder. Nothing in the paper or live execution path placed or monitored them, so every backtest number depended on trade management that real trading never applied. In the same area, the strategy's `riskConfig` never reached execution (it was not written into the signal's `meta`), so risk guardrails ran on defaults, and there was no kill switch and no way to cancel a resting exchange order.
+**What Sprint 16 changed (PR #20):** the strategy's protective exits are enforced when trading — paper positions close themselves on the existing re-mark loop using the backtest's own precedence rules, recording the theoretical trigger separately from the realised fill, and live positions carry exchange-side reduce-only stop/take-profit triggers placed right after the entry fill. Two limits are stated rather than assumed away: a live trailing stop is unenforceable (Hyperliquid has no native trailing trigger), and a failed trigger placement marks the position `unprotected` and alerts instead of auto-flattening. The same sprint added the kill switch (gate first, then cancel and flatten, with per-order outcomes) and fixed two paths that silently starved execution of configuration: the effective `riskConfig` now reaches execution through the signal's `meta`, and a signal generated from a stored template strategy no longer loses its `template` and falls back to generic scoring.
 
-**Known open risks:** the deferred security findings (details in Epic 17) — the SPA catch-all in `app/backend/main.py` serves arbitrary files, `GET /api/wallets` returns `encryptedKey`, seven runtime `.db` files (including `wallets.db`) are tracked in git, and the API has no authentication. These are survivable only because the app runs on localhost with the port unpublished; they are blocking for any hosted, shared or port-exposed run, and the key in the committed `wallets.db` should be treated as public. Beyond security: execution is market-order-only (so the maker-cost results that make the funding templates look viable are not reachable live), and there is no scheduler, so signals and executions are manual — the app is a trading console, not yet an autonomous agent.
+**The parity gap Sprint 16 addressed:** `stopLossPct`, `takeProfitPct` and `trailingStopPct` were honoured only by the backtest engine and the Strategy Finder. Nothing in the paper or live execution path placed or monitored them, so every backtest number depended on trade management that real trading never applied. In the same area, the strategy's `riskConfig` never reached execution (it was not written into the signal's `meta`), so risk guardrails ran on defaults, and there was no kill switch and no way to cancel a resting exchange order.
+
+**Known open risks:** the deferred security findings (details in Epic 17) — the SPA catch-all in `app/backend/main.py` serves arbitrary files, `GET /api/wallets` returns `encryptedKey`, seven runtime `.db` files (including `wallets.db`) are tracked in git, and the API has no authentication. These are survivable only because the app runs on localhost with the port unpublished; they are blocking for any hosted, shared or port-exposed run, and the key in the committed `wallets.db` should be treated as public. Beyond security: there is still no scheduler, so signals and executions are manual button presses — the app is a trading console, not yet an autonomous agent. Sprint 17 is adding the maker path; note that a *paper* maker fill models no queue position (it fills the moment the mark touches the limit), so it is an upper bound in exactly the way the backtest's maker mode is, and a live limit order that fills while unattended cannot have its protective triggers signed by the background monitor, so that position is marked unprotected until someone re-arms it.
 
 ---
 
@@ -62,8 +66,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 | # | Work | Why now |
 |---|---|---|
-| 1 | Epic 21 — Execution parity & controls | Protective exits existed only in the simulator, so live and paper trading did not implement the strategies that were backtested. Also adds the missing kill switch and order cancel. In progress. |
-| 2 | Epic 22 — Limit orders & scheduling | Market-only execution makes the ~3 bps maker results unreachable, and an unused `schedule`/`executionMode` means nothing trades unattended. Live automation additionally needs a session key-unlock design, since signing requires the master password. |
+| 1 | Epic 22 part 1 — Limit/maker orders | Market-only execution makes the ~3 bps maker round trip unreachable, and that gap is the entire apparent edge of the funding templates. In progress. |
+| 2 | Epic 22 part 2 — Strategy scheduling | An unused `schedule`/`executionMode` means nothing trades unattended. Paper automation can land on its own; unattended *live* signing needs a deliberate session-unlock design, since every live order needs the master password. |
 | 3 | Epic 19 — Research depth | The library has no demonstrated edge yet; the Strategy Finder needs persisted runs, purged cross-validation and cross-asset sweeps to search for one honestly. |
 | 4 | Epic 18 leftovers | One controlled testnet or small-size live round trip to verify fill shape, partial fills, rejected orders, the `closedPnl` fee assumption and the funding sign. Needs a funded wallet and the master password. |
 | 5 | Epic 20 — Frontend & observability debt | Two chart libraries ship in the bundle and there are no frontend component tests. |
@@ -394,7 +398,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
-### Sprint 16 — Execution Parity & Controls *(In progress)*
+### Sprint 16 — Execution Parity & Controls *(Done — PR #20)*
 **Goal:** Make live and paper trading implement the strategy that was backtested, and give the operator a way to stop everything.
 
 **Epic:** Epic 21
@@ -407,6 +411,39 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 5. Add resting-order listing, single-order cancel, and a kill switch that cancels, flattens and turns the wallet's live gate off.
 
 **Milestone:** A paper position with a stop closes itself at the stop with the slippage past it visible, a live position carries reduce-only stop/take-profit orders on the exchange, and one button flattens a wallet.
+
+---
+
+### Sprint 17 — Limit/Maker Orders *(In progress)*
+**Goal:** Make a maker fill achievable, so the ~3 bps round trip that the funding templates depend on stops being a backtest-only price.
+
+**Epic:** Epic 22 (part 1)
+
+**Tasks**
+1. Give orders a real lifecycle (`resting`, `partially_filled`, `filled`, `cancelled`, `expired`) and defer position creation until a fill is observed, so market and limit orders open positions through one shared path.
+2. Place post-only (`Alo`) limit orders derived from the live book, rejecting a crossing price rather than silently converting it into a taker fill.
+3. Count resting orders' unfilled notional in the risk guardrails, so several resting orders cannot each pass a check and then all fill.
+4. Advance resting orders from the existing re-mark loop without signing: paper fills at the limit with the maker fee, live progress is read from `open_orders` plus `user_fills` (one read per wallet per cycle).
+5. Report resting-order divergences in the reconciler, and settle local resting orders on cancel and kill switch.
+
+**Milestone:** A limit order can be placed, rest, partially fill, and either complete or be cancelled, with local state matching the exchange at each step and the maker fee actually charged.
+
+**Stated limits:** a paper maker fill models no queue position (it fills when the mark touches the limit, an upper bound like the backtest's maker mode); a live limit order that fills while unattended cannot have protective triggers signed by the monitor, so the resulting position is marked unprotected; and a live order's expiry cannot be enforced by us for the same reason — it alerts for manual cancellation instead.
+
+---
+
+### Sprint 18 — Strategy Scheduling *(Not started)*
+**Goal:** Turn the console into an agent for paper trading, without ever storing the master password.
+
+**Epic:** Epic 22 (part 2)
+
+**Tasks**
+1. Define and validate the supported `schedule` syntax, and reject unparseable schedules loudly instead of silently never firing.
+2. Run due strategies on a cadence: generate a signal, and execute it in paper under `auto` (`auto-confirm` generates and waits).
+3. Per-strategy pause/stop, with last-run/next-run/last-error visible in the UI.
+4. Refuse unattended *live* execution explicitly, pending a session-unlock design.
+
+**Milestone:** A paper strategy runs unattended for 24 hours on its schedule and can be paused and stopped from the UI.
 
 ---
 
@@ -431,6 +468,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | 14 | Epic 18 — Live-trading readiness and reconciliation |
 | 15 | Epics 19–20 — Research depth, chart consolidation, frontend tests |
 | 16 | Epic 21 — Protective-exit enforcement, kill switch, order cancel |
+| 17 | Epic 22 — Limit/maker orders and the resting-order lifecycle |
+| 18 | Epic 22 — Strategy scheduling for paper automation |
 
 ---
 

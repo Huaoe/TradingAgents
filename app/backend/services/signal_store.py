@@ -56,6 +56,7 @@ def _row_to_signal(row: sqlite3.Row) -> dict[str, Any]:
         "agents": row["agents"].split(","),
         "timestamp": row["timestamp"],
         "status": row["status"],
+        "meta": json.loads(row["meta"]) if row["meta"] else None,
     }
 
 
