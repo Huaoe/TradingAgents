@@ -614,6 +614,8 @@ class ExecutionEngine:
             "exchangeOrderId": exchange_order_id,
             "updatedAt": now,
         }
+        if order_status == "filled" and order["filledSize"] <= 0:
+            order["filledSize"] = order["size"]
         self.store.create_order(order)
 
         if order_status != "filled":

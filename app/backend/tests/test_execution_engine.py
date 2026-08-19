@@ -75,6 +75,55 @@ def test_market_execution_still_fills_and_opens_position(
     assert result["order"]["status"] == "filled"
     assert result["position"]["status"] == "open"
     assert result["position"]["size"] == pytest.approx(1.0)
+    stored_order = ExecutionStore().get_order(result["order"]["id"])
+    assert stored_order is not None
+    assert stored_order["filledSize"] == pytest.approx(stored_order["size"])
+
+
+def test_immediate_limit_fill_persists_filled_size(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def update_leverage(self, leverage, symbol, is_cross):
+            return {"status": "ok"}
+
+        def order(self, *args, **kwargs):
+            return {
+                "status": "ok",
+                "response": {
+                    "data": {
+                        "statuses": [
+                            {"filled": {"oid": 93, "avgPx": "99", "totalSz": "1.0"}}
+                        ]
+                    }
+                },
+            }
+
+    signal = _signal("sig-immediate-limit")
+    signal["size"] = 99.0
+    engine = _execution_engine_with_signal(signal, mock_hyperliquid_client)
+    monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
+    monkeypatch.setattr(
+        execution_engine_module,
+        "_live_exchange",
+        lambda wallet, key: FakeExchange(),
+    )
+    engine.wallet_store.decrypt_private_key = lambda wallet_id, password: "private"
+
+    result = engine.execute(
+        "sig-immediate-limit",
+        "wallet-live",
+        mode="live",
+        master_password="password",
+        order_type="limit",
+        limit_price=99.0,
+        tif="Ioc",
+    )
+
+    stored_order = ExecutionStore().get_order(result["order"]["id"])
+    assert stored_order is not None
+    assert stored_order["status"] == "filled"
+    assert stored_order["filledSize"] == pytest.approx(stored_order["size"])
 
 
 def test_paper_limit_fill_uses_maker_fee_at_limit(

@@ -52,6 +52,14 @@ function numericMetaValue(meta: Record<string, unknown> | null, key: string): nu
   return null;
 }
 
+function displayedFilledSize(order: Order): number {
+  const filledSize = order.filledSize ?? 0;
+  if (filledSize > 0 || !['filled', 'closed'].includes(order.status)) {
+    return filledSize;
+  }
+  return order.size;
+}
+
 function ProtectiveDetails({ position }: { position: Position }) {
   const hasLevels =
     position.stopPrice !== null ||
@@ -685,7 +693,7 @@ export function Positions() {
                   <td className={`py-3 ${order.side === 'Buy' ? 'text-emerald-400' : 'text-rose-400'}`}>{order.side}</td>
                   <td className="py-3">{order.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
                   <td className="py-3 text-gray-400">
-                    {(order.filledSize ?? 0).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                    {displayedFilledSize(order).toLocaleString(undefined, { maximumFractionDigits: 6 })}
                     <span className="text-gray-600"> / {order.size.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
                   </td>
                   <td className="py-3 text-gray-400">
