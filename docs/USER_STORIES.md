@@ -399,7 +399,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 14: Testing & Observability *(Partial; US-14.3 frontend component tests not added and `/api/health` does not yet probe DB/Hyperliquid)*
+## Epic 14: Testing & Observability *(Partial; US-14.3 frontend component tests not added. `/api/health` now probes every SQLite store and the Info API — PR #19)*
 
 ### US-14.1 Add backend endpoint smoke tests
 **As a** developer, **I want** all FastAPI endpoints covered by smoke tests, **so that** broken routes are caught in CI.
@@ -456,7 +456,7 @@ Acceptance criteria use:
 
 ---
 
-## Epic 17: Security Remediation *(Next)*
+## Epic 17: Security Remediation *(Deferred by the owner — local-only use; blocking again if the app is exposed)*
 
 ### US-17.1 Stop the SPA route serving arbitrary files
 **As an** operator, **I want** the frontend catch-all to serve only files inside the build directory, **so that** the wallet database cannot be downloaded over HTTP.
@@ -485,3 +485,65 @@ Acceptance criteria use:
 **Acceptance Criteria**
 - Given no or a wrong token, when a request hits a mutating endpoint, then it is rejected with 401 and no state changes.
 - Given no explicit opt-in, when the backend or container starts, then it binds to loopback rather than `0.0.0.0`.
+
+---
+
+## Epic 21: Execution Parity & Controls *(In progress)*
+
+### US-21.1 Have my stop-loss actually apply when I trade
+**As a** trader, **I want** the stop-loss, take-profit and trailing stop I configured to be enforced when I trade, **so that** a live or paper run implements the strategy I backtested rather than an unmanaged version of it.
+
+**Acceptance Criteria**
+- Given a strategy with `stopLossPct` set, when a position is opened, then the protective levels are recorded on the position from the actual fill price.
+- Given a paper position whose stop level is breached, when the next re-mark runs, then the position is closed with exit reason `stop_loss`, and the trigger level and the realised fill price are both recorded so slippage past the stop is visible.
+- Given both a fixed and a trailing stop, when they are evaluated, then the candidate nearest the current price wins and stops are checked before take-profit, matching the backtest's precedence.
+
+### US-21.2 Have protective exits survive my app being closed
+**As a** live trader, **I want** protective exits to live on the exchange, **so that** a stop still fires when the app, the machine or the network is down.
+
+**Acceptance Criteria**
+- Given a live position is opened, when the entry fill is recorded, then reduce-only stop and take-profit trigger orders are placed on Hyperliquid for the filled size and their ids stored on the position.
+- Given the position closes, when the close completes, then any still-resting trigger orders are cancelled.
+- Given trigger placement fails, when the failure is handled, then the position is flagged as unprotected and alerted, and it is *not* automatically flattened.
+- Given a strategy sets `trailingStopPct` on a live trade, when the position is opened, then it is recorded and alerted that Hyperliquid cannot enforce a trailing stop, so the backtest's trailing behaviour does not hold.
+
+### US-21.3 Use the risk settings I configured
+**As a** trader, **I want** the strategy's `riskConfig` to reach execution, **so that** guardrails and protective levels use my settings instead of defaults.
+
+**Acceptance Criteria**
+- Given a signal generated from a strategy, when it is stored, then the effective `riskConfig` used is recorded in the signal's `meta`.
+- Given that signal is executed, when guardrails and protective levels are computed, then they use the recorded values.
+
+### US-21.4 Stop everything with one button
+**As an** operator, **I want** a kill switch, **so that** I can flatten a wallet and stop it opening anything new.
+
+**Acceptance Criteria**
+- Given open positions and resting orders, when I trigger the kill switch for a wallet, then its resting orders are cancelled, its open positions are closed, and its live gate is turned off.
+- Given one leg fails, when the kill switch runs, then the remaining legs still execute and the per-leg outcome is reported.
+- Given it is triggered twice, when the second call runs, then it succeeds without error.
+
+### US-21.5 See and cancel resting orders
+**As a** trader, **I want** to see my resting exchange orders and cancel one, **so that** I am not managing them in the Hyperliquid UI while trading here.
+
+**Acceptance Criteria**
+- Given a wallet with resting orders, when I open the orders view, then they are listed from the exchange.
+- Given I cancel one, when the cancel succeeds, then it disappears from the list.
+
+---
+
+## Epic 22: Limit Orders & Scheduling
+
+### US-22.1 Trade at maker cost
+**As a** trader, **I want** limit orders with a resting-order lifecycle, **so that** the maker-cost results the funding templates depend on are reachable in reality.
+
+**Acceptance Criteria**
+- Given a limit order, when it rests, partially fills, or is cancelled, then local state matches the exchange at each step.
+- Given an unfilled order, when reconciliation runs, then it is reported rather than assumed filled.
+
+### US-22.2 Let a strategy run unattended
+**As a** trader, **I want** a strategy to run on its schedule and execute according to its execution mode, **so that** the app trades without me pressing buttons.
+
+**Acceptance Criteria**
+- Given a strategy with a schedule and `executionMode: auto`, when the schedule elapses, then a signal is generated and executed in paper mode.
+- Given I pause or stop the strategy, when the schedule next elapses, then nothing is generated or executed.
+- Given live automation, when it is attempted without an unlocked session key, then it is refused with an explicit reason rather than storing the master password.
