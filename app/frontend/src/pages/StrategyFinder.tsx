@@ -60,7 +60,7 @@ const TEMPLATE_LABELS: Record<string, string> = {
   atr_rsi_combo: 'ATR + RSI Combo',
   time_series_momentum: 'Time-Series Momentum',
   overnight_seasonality_btc: 'Overnight Seasonality BTC',
-  custom: 'Custom',
+  custom: 'Custom (fallback signal logic)',
 };
 
 const DEFAULT_FEE = { maker: 0.00015, taker: 0.00045 };
@@ -81,6 +81,15 @@ function formatSharpe(value: number | null | undefined) {
   return value.toFixed(4);
 }
 
+function formatCurrency(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const amount = Math.abs(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${value < 0 ? '-' : value > 0 ? '+' : ''}$${amount}`;
+}
+
 function formatDate(value: string) {
   return value.replace('T', ' ').replace(/\+00:00$/, ' UTC').slice(0, 16);
 }
@@ -94,12 +103,17 @@ function formatOverrides(overrides: Record<string, number>) {
     takeProfitPct: 'TP',
     trailingStopPct: 'trail',
   };
-  return Object.entries(overrides)
+  const protectiveKeys = new Set(['stopLossPct', 'takeProfitPct', 'trailingStopPct']);
+  const parts = Object.entries(overrides)
+    .filter(([key, value]) => !protectiveKeys.has(key) || value !== 0)
     .map(([key, value]) => {
       const display = key.endsWith('Pct') ? `${(value * 100).toFixed(1)}%` : value;
       return `${labels[key] || key} ${display}`;
-    })
-    .join(' · ');
+    });
+  if (!Object.entries(overrides).some(([key, value]) => protectiveKeys.has(key) && value !== 0)) {
+    parts.push('no stops');
+  }
+  return parts.join(' · ');
 }
 
 function errorText(error: unknown) {
@@ -112,6 +126,18 @@ function errorText(error: unknown) {
     return body;
   }
 }
+
+type CandidateGroup = {
+  key: string;
+  candidate: StrategySearchCandidate;
+  candidates: StrategySearchCandidate[];
+};
+
+type RegimeGroup = {
+  key: string;
+  breakdown: StrategySearchResult['regimeBreakdown'][number];
+  candidateIds: string[];
+};
 
 function Field({
   label,
@@ -179,6 +205,7 @@ export function StrategyFinder() {
   const [error, setError] = useState('');
   const [savedCandidate, setSavedCandidate] = useState('');
   const [savingCandidate, setSavingCandidate] = useState('');
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -239,6 +266,7 @@ export function StrategyFinder() {
     setError('');
     setResult(null);
     setSavedCandidate('');
+    setShowAllCandidates(false);
     setSubmitting(true);
     const payload: StrategySearchInput = {
       symbol: symbol.trim().toUpperCase(),
@@ -291,6 +319,41 @@ export function StrategyFinder() {
 
   const running = job?.status === 'queued' || job?.status === 'running';
   const selectedByFold = new Map((result?.selection.selectedFolds || []).map((fold) => [fold.fold, fold]));
+  const candidateGroups = useMemo<CandidateGroup[]>(() => {
+    if (!result) return [];
+    const groups = new Map<string, CandidateGroup>();
+    result.candidates.forEach((candidate) => {
+      const { candidateId: _candidateId, overrides: _overrides, riskConfig: _riskConfig, ...metrics } = candidate;
+      const key = JSON.stringify(metrics);
+      const existing = groups.get(key);
+      if (existing) {
+        existing.candidates.push(candidate);
+      } else {
+        groups.set(key, { key, candidate, candidates: [candidate] });
+      }
+    });
+    return Array.from(groups.values());
+  }, [result]);
+  const regimeGroups = useMemo<RegimeGroup[]>(() => {
+    if (!result) return [];
+    const groups = new Map<string, RegimeGroup>();
+    result.regimeBreakdown.forEach((breakdown) => {
+      const key = JSON.stringify({ template: breakdown.template, regimes: breakdown.regimes });
+      const existing = groups.get(key);
+      if (existing) {
+        existing.candidateIds.push(breakdown.candidateId);
+      } else {
+        groups.set(key, { key, breakdown, candidateIds: [breakdown.candidateId] });
+      }
+    });
+    return Array.from(groups.values());
+  }, [result]);
+  const winnerGroup = result
+    ? candidateGroups.find((group) => group.candidates.some((candidate) => candidate.candidateId === result.fullRangeWinner.candidateId))
+    : undefined;
+  const visibleCandidateGroups = showAllCandidates
+    ? candidateGroups
+    : candidateGroups.slice(0, 25).concat(winnerGroup && !candidateGroups.slice(0, 25).includes(winnerGroup) ? [winnerGroup] : []);
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
@@ -406,7 +469,8 @@ export function StrategyFinder() {
               <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${job.progress.total ? Math.min(100, job.progress.completed / job.progress.total * 100) : 0}%` }} />
             </div>
             <p className="text-xs text-gray-500">
-              {job.candidateCount.toLocaleString()} candidates · {job.simulationCount.toLocaleString()} simulations. Historical searches can take several minutes; this page will keep polling until the job finishes.
+              {job.candidateCount.toLocaleString()} candidates · {job.simulationCount.toLocaleString()} simulations
+              {running && '. Historical searches can take several minutes; this page will keep polling until the job finishes.'}
             </p>
             {job.error && <p className="whitespace-pre-wrap text-sm text-rose-300">{job.error}</p>}
           </div>
@@ -446,15 +510,26 @@ export function StrategyFinder() {
                   <tr>{['Candidate', 'Overrides', 'Median / mean OOS return', 'Median OOS Sharpe', 'Annualised', 'OOS trades', 'Folds', 'Overfit gap', 'Full return', ''].map((heading) => <th key={heading} className="px-3 py-2 font-medium">{heading}</th>)}</tr>
                 </thead>
                 <tbody>
-                  {result.candidates.map((candidate) => {
-                    const isWinner = candidate.candidateId === result.fullRangeWinner.candidateId;
+                  {visibleCandidateGroups.map((group) => {
+                    const { candidate } = group;
+                    const isWinner = group.candidates.some((item) => item.candidateId === result.fullRangeWinner.candidateId);
                     return (
-                      <tr key={candidate.candidateId} className={`border-b border-gray-800/70 ${isWinner ? 'bg-amber-500/10 ring-1 ring-inset ring-amber-400/50' : 'hover:bg-gray-800/30'}`}>
+                      <tr key={group.key} className={`border-b border-gray-800/70 ${isWinner ? 'bg-amber-500/10 ring-1 ring-inset ring-amber-400/50' : 'hover:bg-gray-800/30'}`}>
                         <td className="px-3 py-3">
                           <div className="font-medium text-gray-200">{TEMPLATE_LABELS[candidate.template] || candidate.template}</div>
                           <div className="text-[10px] text-gray-500">{candidate.candidateId}{isWinner ? ' · full-range winner' : ''}</div>
                         </td>
-                        <td className="max-w-[250px] px-3 py-3 text-gray-400">{formatOverrides(candidate.overrides)}</td>
+                        <td className="max-w-[250px] px-3 py-3 text-gray-400">
+                          {formatOverrides(candidate.overrides)}
+                          {group.candidates.length > 1 && (
+                            <details className="mt-1 text-[10px] text-gray-500">
+                              <summary className="cursor-pointer text-violet-300">{group.candidates.length} identical parameter sets</summary>
+                              <ul className="mt-1 space-y-1 pl-3">
+                                {group.candidates.map((item) => <li key={item.candidateId}>{item.candidateId}: {formatOverrides(item.overrides)}</li>)}
+                              </ul>
+                            </details>
+                          )}
+                        </td>
                         <td className="px-3 py-3 text-gray-300">{formatPct(candidate.medianOutOfSampleReturnPct)} / {formatPct(candidate.meanOutOfSampleReturnPct)}</td>
                         <td className="px-3 py-3 text-gray-300">{formatSharpe(candidate.medianOutOfSampleSharpePerBar)}</td>
                         <td className="px-3 py-3 text-gray-300">{formatSharpe(candidate.medianOutOfSampleSharpeAnnualised)}</td>
@@ -474,6 +549,11 @@ export function StrategyFinder() {
                 </tbody>
               </table>
             </div>
+            {candidateGroups.length > 25 && (
+              <button type="button" onClick={() => setShowAllCandidates((current) => !current)} className="mt-3 text-xs text-violet-300 hover:text-violet-200">
+                {showAllCandidates ? 'Show top 25 collapsed rows' : `Show all ${candidateGroups.length} collapsed rows`}
+              </button>
+            )}
           </Card>
 
           <Card title="Selected walk-forward folds">
@@ -512,12 +592,23 @@ export function StrategyFinder() {
           <Card title="Regime breakdown">
             <p className="mb-4 text-xs text-gray-500">Reported for the top three out-of-sample candidates plus the full-range winner. Thin buckets are shown, not promoted to findings.</p>
             <div className="space-y-5">
-              {result.regimeBreakdown.map((breakdown) => (
-                <div key={breakdown.candidateId}>
+              {regimeGroups.map((group) => {
+                const { breakdown } = group;
+                const isWinner = group.candidateIds.includes(result.fullRangeWinner.candidateId);
+                return (
+                <div key={group.key}>
                   <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium text-gray-200">
                     {TEMPLATE_LABELS[breakdown.template] || breakdown.template}
                     <span className="text-xs text-gray-500">{breakdown.candidateId}</span>
-                    {breakdown.candidateId === result.fullRangeWinner.candidateId && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">full-range winner</span>}
+                    {isWinner && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-300">full-range winner</span>}
+                    {group.candidateIds.length > 1 && (
+                      <details className="text-[10px] font-normal text-gray-500">
+                        <summary className="cursor-pointer text-violet-300">{group.candidateIds.length} identical parameter sets</summary>
+                        <div className="mt-1 rounded border border-gray-800 bg-gray-900/50 p-2">
+                          {group.candidateIds.join(', ')}
+                        </div>
+                      </details>
+                    )}
                   </div>
                   {breakdown.regimes.length ? (
                     <div className="overflow-x-auto">
@@ -533,7 +624,7 @@ export function StrategyFinder() {
                               <td className="px-3 py-2 text-gray-400">{regime.volRegime}</td>
                               <td className="px-3 py-2">{regime.trades}</td>
                               <td className="px-3 py-2">{formatPct(regime.winRatePct)}</td>
-                              <td className="px-3 py-2">{formatPct(regime.netPnl)}</td>
+                              <td className="px-3 py-2">{formatCurrency(regime.netPnl)}</td>
                               <td className="px-3 py-2">{formatPct(regime.avgReturnPct)}</td>
                               <td className="px-3 py-2">{regime.sufficient ? 'sufficient' : 'thin sample'}</td>
                             </tr>
@@ -543,7 +634,8 @@ export function StrategyFinder() {
                     </div>
                   ) : <p className="text-xs text-gray-500">No trades in the reported regimes.</p>}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
 
