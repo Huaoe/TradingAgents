@@ -23,6 +23,15 @@ class _FundingInfo:
         ]
 
 
+class _StuckFundingInfo:
+    def __init__(self):
+        self.calls = 0
+
+    def funding_history(self, symbol, start_ms, end_ms):
+        self.calls += 1
+        return [{"time": start_ms, "coin": symbol, "fundingRate": "0.01", "premium": "0"}]
+
+
 def test_funding_history_pages_past_api_limit(monkeypatch):
     client = object.__new__(HyperliquidClient)
     info = _FundingInfo()
@@ -55,3 +64,14 @@ def test_get_market_uses_keyed_cache(monkeypatch):
 
     assert client.get_market(key) == market
     assert calls == {"perp": 0, "spot": 0}
+
+
+def test_funding_history_has_a_page_limit():
+    client = object.__new__(HyperliquidClient)
+    info = _StuckFundingInfo()
+    client._info = info
+    client._max_funding_pages = 3
+
+    client.get_funding_history("BTC", start_ms=0, end_ms=100)
+
+    assert info.calls == 3

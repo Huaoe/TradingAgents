@@ -19,6 +19,7 @@ class HyperliquidClient:
     _market_cache: dict[str, dict[str, Any]] = {}
     _market_cache_expiry: dict[str, float] = {}
     _cache_ttl_seconds = 10.0
+    _max_funding_pages = 1_000
 
     def __new__(cls) -> HyperliquidClient:
         if cls._instance is None:
@@ -178,7 +179,9 @@ class HyperliquidClient:
             start_ms = end_ms - 30 * 24 * 60 * 60 * 1000
         rows: list[dict[str, Any]] = []
         cursor = start_ms
-        while cursor <= end_ms:
+        for _ in range(self._max_funding_pages):
+            if cursor > end_ms:
+                break
             raw = self.info.funding_history(symbol, cursor, end_ms)
             if not raw:
                 break

@@ -20,6 +20,7 @@ const DEFAULT_STRATEGY: StrategyInput = {
   riskConfig: {
     longFundingThreshold: -0.0005,
     shortFundingThreshold: 0.0012,
+    fundingExtremeK: 1.5,
     leverage: 3,
     allocation: 10,
     confidenceFloor: 60,
@@ -129,6 +130,7 @@ export function StrategyEditor() {
           riskConfig: {
             longFundingThreshold: (s.riskConfig.longFundingThreshold * 100),
             shortFundingThreshold: (s.riskConfig.shortFundingThreshold * 100),
+            fundingExtremeK: s.riskConfig.fundingExtremeK,
             leverage: s.riskConfig.leverage,
             allocation: s.riskConfig.allocation * 100,
             confidenceFloor: s.riskConfig.confidenceFloor,
@@ -227,6 +229,10 @@ export function StrategyEditor() {
       setError('Funding thresholds must be between -100% and 100%.');
       return false;
     }
+    if ((rc.fundingExtremeK ?? 1.5) < 0) {
+      setError('Funding extreme K cannot be negative.');
+      return false;
+    }
     if ((rc.minHoldBars ?? 0) < 0 || (rc.cooldownBars ?? 0) < 0) {
       setError('Hold and cooldown bars cannot be negative.');
       return false;
@@ -253,6 +259,7 @@ export function StrategyEditor() {
         riskConfig: {
           longFundingThreshold: (strategy.riskConfig?.longFundingThreshold || 0) / 100,
           shortFundingThreshold: (strategy.riskConfig?.shortFundingThreshold || 0) / 100,
+          fundingExtremeK: strategy.riskConfig?.fundingExtremeK,
           leverage: strategy.riskConfig?.leverage || 3,
           allocation: (strategy.riskConfig?.allocation || 10) / 100,
           confidenceFloor: strategy.riskConfig?.confidenceFloor || 60,
@@ -468,6 +475,17 @@ export function StrategyEditor() {
                 step={0.0001}
                 value={strategy.riskConfig?.shortFundingThreshold}
                 onChange={(value) => updateRisk('shortFundingThreshold', value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-400 mb-1">Funding extreme K (arb templates)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.1}
+                value={strategy.riskConfig?.fundingExtremeK ?? ''}
+                onChange={(e) => updateRisk('fundingExtremeK', e.target.value === '' ? 0 : Number(e.target.value))}
+                className="w-full px-3 py-2 rounded-lg bg-[#0b0d12] border border-gray-800 focus:border-violet-500 outline-none"
               />
             </div>
             <div>

@@ -232,6 +232,25 @@ def test_fee_side_and_exit_notional_fee(monkeypatch, mock_hyperliquid_client):
     assert maker["trades"][0]["netPnl"] == 958.0
 
 
+def test_summary_metrics_use_net_trade_returns(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 0],
+        [100.0, 110.0],
+        taker_fee=0.06,
+        slippage_pct=0.0,
+    )
+
+    trade = result["trades"][0]
+    assert trade["grossPnl"] > 0
+    assert trade["netPnl"] < 0
+    assert trade["returnPct"] < 0
+    assert result["summary"]["profitFactor"] == 0.0
+    assert result["summary"]["grossProfitFactor"] == 999.99
+    assert result["summary"]["avgTradeReturnPct"] == trade["returnPct"]
+
+
 def test_min_hold_cooldown_and_exit_hysteresis(monkeypatch, mock_hyperliquid_client):
     result = _scripted_backtest(
         monkeypatch,
@@ -306,6 +325,25 @@ def test_take_profit_and_trailing_stop_exits(monkeypatch, mock_hyperliquid_clien
     assert trailing["trades"][0]["exitPrice"] == 104.5
 
 
+def test_trailing_stop_uses_prior_bar_extreme(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1],
+        [100.0, 100.0],
+        highs=[100.0, 110.0],
+        lows=[100.0, 94.0],
+        risk_config={"trailingStopPct": 0.05},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    trade = result["trades"][0]
+    assert trade["exitReason"] == "trailing_stop"
+    assert trade["exitPrice"] == 95.0
+
+
 def test_funding_scales_with_bar_duration(monkeypatch, mock_hyperliquid_client):
     start_ms = 1_704_067_200_000
     result = _scripted_backtest(
@@ -332,3 +370,19 @@ def test_merge_funding_does_not_backfill_leading_gaps():
     )
 
     assert merged["fundingRate"].tolist() == [0.0, 0.01]
+
+
+def test_merge_funding_extremes_use_only_prior_bars():
+    start = pd.Timestamp("2024-01-01T00:00:00Z")
+    index = pd.date_range(start, periods=169, freq="h")
+    df = pd.DataFrame(index=index)
+    history = [
+        {"time": int(timestamp.timestamp() * 1000), "fundingRate": float(i)}
+        for i, timestamp in enumerate(index)
+    ]
+
+    merged = _merge_funding(df, history)
+
+    assert pd.isna(merged["fundingMedian168"].iloc[167])
+    assert merged["fundingMedian168"].iloc[168] == 83.5
+    assert merged["fundingRate"].iloc[168] == 168.0

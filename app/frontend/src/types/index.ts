@@ -96,6 +96,7 @@ export type LLMMode = 'quick' | 'deep';
 export interface RiskConfig {
   longFundingThreshold: number;
   shortFundingThreshold: number;
+  fundingExtremeK?: number;
   leverage: number;
   allocation: number;
   confidenceFloor: number;
@@ -180,6 +181,8 @@ export interface BacktestSummary {
   totalGrossPnl: number;
   totalFees: number;
   totalFundingCost: number;
+  grossProfitFactor: number;
+  totalNetPnl: number;
 }
 
 export interface BacktestTrade {

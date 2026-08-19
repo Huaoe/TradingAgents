@@ -42,7 +42,9 @@ class TradeRecord(BaseModel):
     netPnl: float
     returnPct: float
     confidence: int
-    exitReason: Literal["signal", "stop_loss", "take_profit", "trailing_stop", "end_of_backtest"]
+    exitReason: Literal[
+        "signal", "stop_loss", "take_profit", "trailing_stop", "end_of_backtest"
+    ] = "signal"
 
 
 class BacktestSummary(BaseModel):
@@ -81,6 +83,8 @@ class BacktestSummary(BaseModel):
     totalGrossPnl: float = 0.0
     totalFees: float = 0.0
     totalFundingCost: float = 0.0
+    grossProfitFactor: float = 0.0
+    totalNetPnl: float = 0.0
 
 
 class BacktestResult(BaseModel):

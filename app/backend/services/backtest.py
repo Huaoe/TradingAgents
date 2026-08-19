@@ -127,6 +127,8 @@ def _merge_funding(
     funding_history: list[dict[str, Any]],
 ) -> pd.DataFrame:
     df["fundingRate"] = 0.0
+    df["fundingMedian168"] = float("nan")
+    df["fundingStd168"] = float("nan")
     if not funding_history:
         return df
     ff = pd.DataFrame(funding_history)
@@ -143,6 +145,10 @@ def _merge_funding(
     ff = ff.reindex(combined_index).sort_index()
     ff["fundingRate"] = ff["fundingRate"].ffill()
     df["fundingRate"] = ff.reindex(df.index)["fundingRate"].fillna(0.0)
+    # A 168-bar trailing distribution is approximately seven days on 1h data.
+    rates = df["fundingRate"].astype(float)
+    df["fundingMedian168"] = rates.rolling(168, min_periods=168).median().shift(1)
+    df["fundingStd168"] = rates.rolling(168, min_periods=168).std(ddof=1).shift(1)
     return df
 
 
@@ -388,7 +394,7 @@ def run_backtest(
         net_pnl = float(gross_pnl - entry_cost - exit_cost - cumulative_funding)
         cash = float(cash + gross_pnl - exit_cost - cumulative_funding)
         side = "LONG" if position == 1 else "SHORT"
-        return_pct = float((gross_pnl / entry_notional * 100) if entry_notional else 0.0)
+        return_pct = float((net_pnl / entry_notional * 100) if entry_notional else 0.0)
         trades.append(
             {
                 "entryTime": entry_time.isoformat() if entry_time else None,
@@ -441,7 +447,6 @@ def run_backtest(
             high = float(row["high"])
             low = float(row["low"])
             if position == 1:
-                highest_price = max(highest_price, high)
                 stop_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct else None
                 target_price = entry_price * (1 + take_profit_pct) if take_profit_pct else None
                 trailing_price = (
@@ -465,8 +470,9 @@ def run_backtest(
                 if protective_exit is None and target_price is not None and high >= target_price:
                     protective_exit = "take_profit"
                     protective_price = target_price
+                if protective_exit is None:
+                    highest_price = max(highest_price, high)
             else:
-                lowest_price = min(lowest_price, low)
                 stop_price = entry_price * (1 + stop_loss_pct) if stop_loss_pct else None
                 target_price = entry_price * (1 - take_profit_pct) if take_profit_pct else None
                 trailing_price = (
@@ -490,6 +496,8 @@ def run_backtest(
                 if protective_exit is None and target_price is not None and low <= target_price:
                     protective_exit = "take_profit"
                     protective_price = target_price
+                if protective_exit is None:
+                    lowest_price = min(lowest_price, low)
 
         if protective_exit is not None:
             close_position(float(protective_price), time, protective_exit)
@@ -534,10 +542,19 @@ def run_backtest(
     wins = [t for t in trades if t["netPnl"] > 0]
     losses = [t for t in trades if t["netPnl"] <= 0]
     win_rate = float((len(wins) / len(trades) * 100) if trades else 0.0)
-    gross_profit = float(sum(t["grossPnl"] for t in wins))
-    gross_loss = float(abs(sum(t["grossPnl"] for t in losses)))
+    net_profit = float(sum(t["netPnl"] for t in wins))
+    net_loss = float(abs(sum(t["netPnl"] for t in losses)))
     profit_factor = float(
-        gross_profit / gross_loss if gross_loss > 0 else (math.inf if gross_profit > 0 else 0.0)
+        net_profit / net_loss if net_loss > 0 else (math.inf if net_profit > 0 else 0.0)
+    )
+    gross_wins = [t for t in trades if t["grossPnl"] > 0]
+    gross_losses = [t for t in trades if t["grossPnl"] <= 0]
+    gross_profit = float(sum(t["grossPnl"] for t in gross_wins))
+    gross_loss = float(abs(sum(t["grossPnl"] for t in gross_losses)))
+    gross_profit_factor = float(
+        gross_profit / gross_loss
+        if gross_loss > 0
+        else (math.inf if gross_profit > 0 else 0.0)
     )
     avg_trade_return = float(sum(t["returnPct"] for t in trades) / len(trades) if trades else 0.0)
     avg_win = float(sum(t["returnPct"] for t in wins) / len(wins) if wins else 0.0)
@@ -580,6 +597,9 @@ def run_backtest(
         "maxDrawdownPct": _fmt(max_dd),
         "winRatePct": _fmt(win_rate),
         "profitFactor": _fmt(profit_factor) if not math.isinf(float(profit_factor)) else 999.99,
+        "grossProfitFactor": (
+            _fmt(gross_profit_factor) if not math.isinf(float(gross_profit_factor)) else 999.99
+        ),
         "totalTrades": int(len(trades)),
         "avgTradeReturnPct": _fmt(avg_trade_return),
         "avgWinPct": _fmt(avg_win),
@@ -605,6 +625,7 @@ def run_backtest(
         "totalGrossPnl": _fmt(sum(t["grossPnl"] for t in trades)),
         "totalFees": _fmt(sum(t["fees"] for t in trades)),
         "totalFundingCost": _fmt(sum(t["fundingCost"] for t in trades)),
+        "totalNetPnl": _fmt(sum(t["netPnl"] for t in trades)),
     }
 
     return {

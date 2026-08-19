@@ -16,6 +16,7 @@ class RiskConfig(BaseModel):
     leverage: int = 3
     allocation: float = 0.10
     confidenceFloor: int = 60
+    fundingExtremeK: float | None = None
     minHoldBars: int | None = None
     cooldownBars: int | None = None
     exitHysteresis: float | None = None

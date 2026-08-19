@@ -19,6 +19,7 @@ _ARB_SHORT_FUNDING = 0.000011
 
 
 def _risk_config(
+    *,
     leverage: int,
     allocation: float,
     confidence_floor: int,
@@ -27,7 +28,6 @@ def _risk_config(
     stop_loss_pct: float,
     take_profit_pct: float,
     trailing_stop_pct: float,
-    *,
     funding_arb: bool = False,
 ) -> dict[str, Any]:
     """Build template risk defaults; funding thresholds are hourly rates."""
@@ -43,6 +43,7 @@ def _risk_config(
         "stopLossPct": stop_loss_pct,
         "takeProfitPct": take_profit_pct,
         "trailingStopPct": trailing_stop_pct,
+        "fundingExtremeK": 1.5 if funding_arb else None,
     }
 
 
@@ -57,7 +58,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(5, 0.15, 65, 3, 2, 0.02, 0.04, 0.015),
+        "riskConfig": _risk_config(
+            leverage=5, allocation=0.15, confidence_floor=65, min_hold_bars=3,
+            cooldown_bars=2, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-mean-reversion",
@@ -69,7 +73,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.10, 60, 4, 2, 0.015, 0.025, 0.01),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=4,
+            cooldown_bars=2, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-funding-rate-arb",
@@ -81,7 +88,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": _risk_config(2, 0.20, 70, 6, 4, 0.01, 0.015, 0.008, funding_arb=True),
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.20, confidence_floor=70, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-hype-delta-neutral",
@@ -93,7 +104,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": _risk_config(1, 0.25, 75, 6, 4, 0.01, 0.015, 0.008, funding_arb=True),
+        "riskConfig": _risk_config(
+            leverage=1, allocation=0.25, confidence_floor=75, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-trend-following",
@@ -105,7 +120,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(4, 0.12, 62, 8, 4, 0.025, 0.05, 0.02),
+        "riskConfig": _risk_config(
+            leverage=4, allocation=0.12, confidence_floor=62, min_hold_bars=8,
+            cooldown_bars=4, stop_loss_pct=0.025, take_profit_pct=0.05, trailing_stop_pct=0.02,
+        ),
     },
     {
         "id": "template-scalp-momentum",
@@ -117,7 +135,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(6, 0.08, 68, 2, 2, 0.01, 0.015, 0.008),
+        "riskConfig": _risk_config(
+            leverage=6, allocation=0.08, confidence_floor=68, min_hold_bars=2,
+            cooldown_bars=2, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+        ),
     },
     {
         "id": "template-news-event",
@@ -129,7 +150,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(4, 0.10, 70, 2, 3, 0.02, 0.04, 0.015),
+        "riskConfig": _risk_config(
+            leverage=4, allocation=0.10, confidence_floor=70, min_hold_bars=2,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-basis-arbitrage",
@@ -141,7 +165,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": _risk_config(2, 0.30, 75, 6, 4, 0.01, 0.015, 0.008, funding_arb=True),
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.30, confidence_floor=75, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-grid-trading",
@@ -153,7 +181,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(2, 0.10, 60, 3, 3, 0.015, 0.02, 0.01),
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.10, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.015, take_profit_pct=0.02, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-dual-thrust",
@@ -165,7 +196,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.12, 60, 3, 3, 0.02, 0.04, 0.015),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-turtle-breakout",
@@ -177,7 +211,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.12, 60, 12, 6, 0.03, 0.08, 0.025),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=12,
+            cooldown_bars=6, stop_loss_pct=0.03, take_profit_pct=0.08, trailing_stop_pct=0.025,
+        ),
     },
     {
         "id": "template-ema-bands-trend-catch",
@@ -189,7 +226,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.12, 60, 8, 4, 0.02, 0.04, 0.02),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=8,
+            cooldown_bars=4, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.02,
+        ),
     },
     {
         "id": "template-atr-rsi-combo",
@@ -201,7 +241,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.10, 60, 4, 3, 0.015, 0.025, 0.012),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=4,
+            cooldown_bars=3, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.012,
+        ),
     },
     {
         "id": "template-time-series-momentum",
@@ -213,7 +256,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.12, 60, 12, 6, 0.03, 0.07, 0.025),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=12,
+            cooldown_bars=6, stop_loss_pct=0.03, take_profit_pct=0.07, trailing_stop_pct=0.025,
+        ),
     },
     {
         "id": "template-overnight-seasonality-btc",
@@ -225,7 +271,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(2, 0.10, 65, 1, 1, 0.015, 0.025, 0.01),
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.10, confidence_floor=65, min_hold_bars=1,
+            cooldown_bars=1, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-custom",
@@ -237,7 +286,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": _risk_config(3, 0.10, 60, 3, 3, 0.02, 0.04, 0.015),
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
 ]
 
@@ -313,9 +365,26 @@ class StrategyStore:
         with sqlite3.connect(self._db_path) as conn:
             for template in TEMPLATES:
                 existing = conn.execute(
-                    "SELECT 1 FROM strategies WHERE id = ?", (template["id"],)
+                    "SELECT data, created_at FROM strategies WHERE id = ?", (template["id"],)
                 ).fetchone()
                 if existing:
+                    record = json.loads(existing[0])
+                    created_at = record.get("createdAt") or existing[1]
+                    now = _utc_now()
+                    record.update(
+                        {
+                            "name": template["name"],
+                            "description": template["description"],
+                            "template": template["template"],
+                            "riskConfig": template["riskConfig"],
+                            "createdAt": created_at,
+                            "updatedAt": now,
+                        }
+                    )
+                    conn.execute(
+                        "UPDATE strategies SET data = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(record), now, template["id"]),
+                    )
                     continue
                 now = _utc_now()
                 record = {

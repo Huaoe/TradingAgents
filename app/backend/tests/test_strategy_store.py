@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import sqlite3
+
 import pytest
 
 from backend.models.strategy import StrategyCreate
@@ -68,3 +71,42 @@ def test_strategy_store_seeds_templates():
     template_ids = {s.id for s in strategies}
     for template in TEMPLATES:
         assert template["id"] in template_ids
+
+
+def test_seed_refreshes_stale_templates_but_not_user_strategies():
+    store = StrategyStore()
+    user = store.create_strategy(StrategyCreate(name="keep-me", description="custom"))
+    template_id = TEMPLATES[0]["id"]
+    stale_created_at = store.get_strategy(template_id).createdAt
+
+    with sqlite3.connect(store._db_path) as conn:
+        row = conn.execute(
+            "SELECT data FROM strategies WHERE id = ?", (template_id,)
+        ).fetchone()
+        stale = json.loads(row[0])
+        stale["name"] = "Old Template"
+        stale["description"] = "Old description"
+        stale["riskConfig"] = {
+            **stale["riskConfig"],
+            "longFundingThreshold": -0.0005,
+            "shortFundingThreshold": 0.0005,
+            "minHoldBars": None,
+        }
+        conn.execute(
+            "UPDATE strategies SET data = ? WHERE id = ?",
+            (json.dumps(stale), template_id),
+        )
+
+    StrategyStore._instance = None
+    refreshed_store = StrategyStore(db_path=store._db_path)
+    refreshed = refreshed_store.get_strategy(template_id)
+    unchanged_user = refreshed_store.get_strategy(user.id)
+
+    assert refreshed is not None
+    assert refreshed.createdAt == stale_created_at
+    assert refreshed.name == TEMPLATES[0]["name"]
+    assert refreshed.description == TEMPLATES[0]["description"]
+    assert refreshed.riskConfig.model_dump() == TEMPLATES[0]["riskConfig"]
+    assert unchanged_user is not None
+    assert unchanged_user.name == user.name
+    assert unchanged_user.description == user.description

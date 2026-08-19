@@ -514,7 +514,8 @@ export function Backtest() {
               positive={false}
             />
             <StatCard label="Win Rate" value={formatPct(stats.winRatePct)} icon={Percent} />
-            <StatCard label="Profit Factor" value={formatNumber(stats.profitFactor)} icon={BarChart3} />
+            <StatCard label="Net Profit Factor" value={formatNumber(stats.profitFactor)} icon={BarChart3} />
+            <StatCard label="Gross Profit Factor" value={formatNumber(stats.grossProfitFactor)} icon={BarChart3} />
             <StatCard label="# Trades" value={String(stats.totalTrades)} icon={Activity} />
             <StatCard
               label="Final Balance"
@@ -645,8 +646,8 @@ export function Backtest() {
               </div>
               <div>
                 <div className="text-xs text-gray-500">Net PnL</div>
-                <div className={`font-semibold ${stats.totalGrossPnl - stats.totalFees - stats.totalFundingCost >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {formatUSD(stats.totalGrossPnl - stats.totalFees - stats.totalFundingCost)}
+                <div className={`font-semibold ${stats.totalNetPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatUSD(stats.totalNetPnl)}
                 </div>
               </div>
               <div>
