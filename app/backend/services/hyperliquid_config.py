@@ -7,11 +7,11 @@ import os
 from hyperliquid.utils import constants
 
 NETWORK_ENV_VAR = "HYPERLIQUID_NETWORK"
-DEFAULT_NETWORK = "testnet"
+DEFAULT_NETWORK = "mainnet"
 
 
 def get_hyperliquid_network(network: str | None = None) -> str:
-    """Resolve the configured Hyperliquid network, defaulting safely to testnet."""
+    """Resolve the configured Hyperliquid network, defaulting to mainnet for data."""
     value = (network or os.getenv(NETWORK_ENV_VAR, DEFAULT_NETWORK)).strip().lower()
     if value not in {"mainnet", "testnet"}:
         raise ValueError(f"{NETWORK_ENV_VAR} must be 'mainnet' or 'testnet', got {value!r}")

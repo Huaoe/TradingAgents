@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -64,8 +65,6 @@ def _live_exchange(wallet: Wallet, private_key: str):
 
 def _live_trading_enabled() -> bool:
     """Return whether the process-wide live-trading gate is enabled."""
-    import os
-
     return os.environ.get("LIVE_TRADING", "false").lower() in ("true", "1", "yes")
 
 
@@ -188,7 +187,9 @@ class ExecutionEngine:
         margin = round(notional / leverage, 2) if leverage else round(notional, 2)
         live_market = self.client.get_market(symbol)
         live_mark = (
-            live_market.get("markPrice") or live_market.get("price") or fill_price
+            live_market.get("markPrice")
+            or live_market.get("price")
+            or fill_price
             if live_market
             else fill_price
         )

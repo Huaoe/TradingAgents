@@ -112,10 +112,10 @@ def test_user_fees_are_keyed_and_cached():
     assert info.calls == 1
 
 
-def test_network_resolution_defaults_to_testnet(monkeypatch):
+def test_network_resolution_defaults_to_mainnet(monkeypatch):
     monkeypatch.delenv("HYPERLIQUID_NETWORK", raising=False)
-    assert get_hyperliquid_network() == "testnet"
-    assert get_hyperliquid_base_url() != get_hyperliquid_base_url("mainnet")
+    assert get_hyperliquid_network() == "mainnet"
+    assert get_hyperliquid_base_url() == get_hyperliquid_base_url("mainnet")
 
 
 def test_client_rebuilds_info_and_caches_when_network_changes(monkeypatch):

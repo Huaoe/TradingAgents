@@ -48,8 +48,9 @@ Optional trading safety variables:
 LIVE_TRADING=false
 
 # Select the network used consistently for market data and order execution.
-# The safe default is testnet; use mainnet only when ready for real orders.
-HYPERLIQUID_NETWORK=testnet
+# The default is mainnet for complete market data; live orders remain gated below.
+# Set this to testnet to use testnet for both data and execution.
+HYPERLIQUID_NETWORK=mainnet
 ```
 
 ## 3. Run in development
@@ -108,7 +109,9 @@ docker compose -f app/docker-compose.web.yml down
   the trade request. Both gates are checked for every live open and close; an
   error identifies the gate that is off.
 - Market data and execution use the same `HYPERLIQUID_NETWORK` setting. The
-  backend defaults to `testnet` and the Dashboard displays the active network.
+  backend defaults to `mainnet` for data, and the Dashboard displays the active
+  network. Set `HYPERLIQUID_NETWORK=testnet` to switch both data and execution
+  to testnet.
 - Before mainnet trading, fund the Hyperliquid mainnet account with USDC
   bridged via Arbitrum. Execution supports an approved Hyperliquid API agent
   wallet because it passes `account_address=wallet.address` to the SDK.
