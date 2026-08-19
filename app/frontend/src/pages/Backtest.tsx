@@ -68,7 +68,7 @@ const TRADE_HINTS: Record<string, string> = {
   'Exit $': 'Exit price of the trade.',
   Size: 'Position size in coins.',
   'Net PnL': 'Net profit or loss after fees and funding.',
-  Return: 'Gross return percent on the trade.',
+  Return: 'Net return percent on the trade, after fees and funding.',
   Confidence: 'Signal confidence score at entry (0-100).',
 };
 
