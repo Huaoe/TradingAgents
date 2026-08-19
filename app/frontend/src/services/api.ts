@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob } from '../types';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -12,6 +12,10 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;
+}
+
+export async function fetchHealth(): Promise<Health> {
+  return api<Health>('/api/health');
 }
 
 export async function fetchMarkets(): Promise<Market[]> {

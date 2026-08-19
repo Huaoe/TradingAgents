@@ -85,6 +85,12 @@ export interface Account {
   llmCalls?: number;
 }
 
+export interface Health {
+  status: string;
+  network: 'mainnet' | 'testnet';
+  time: string;
+}
+
 export interface PortfolioHistoryPoint {
   timestamp: string;
   totalValue: number;
