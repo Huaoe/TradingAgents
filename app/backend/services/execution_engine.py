@@ -262,6 +262,20 @@ class ExecutionEngine:
                         )
                     else:
                         trailing_watermark = existing["trailingWatermark"]
+            recomputed_status = (
+                "pending"
+                if any(
+                    position_level is not None
+                    for position_level in (
+                        protective["stopPrice"],
+                        protective["takeProfitPrice"],
+                        protective["trailingStopPct"],
+                    )
+                )
+                else "disabled"
+            )
+            if order["mode"] == "live" and recomputed_status == "pending":
+                recomputed_status = "unprotected"
             existing.update(
                 {
                     "entryPrice": weighted_entry,
@@ -281,20 +295,7 @@ class ExecutionEngine:
                     else round(weighted_entry * total_size, 2),
                     "trailingWatermark": trailing_watermark,
                     "protectiveStatus": (
-                        "unprotected"
-                        if protection_misaligned
-                        else (
-                            "pending"
-                            if any(
-                                position_level is not None
-                                for position_level in (
-                                    protective["stopPrice"],
-                                    protective["takeProfitPrice"],
-                                    protective["trailingStopPct"],
-                                )
-                            )
-                            else "disabled"
-                        )
+                        "unprotected" if protection_misaligned else recomputed_status
                     ),
                     "trailingUnsupported": order["mode"] == "live"
                     and float(risk_config.get("trailingStopPct") or 0.0) > 0,

@@ -198,6 +198,10 @@ def test_live_partial_fill_batches_aggregate_one_weighted_position(
     )
     signal = _signal("sig-batched")
     signal["size"] = 99.0
+    signal["meta"]["riskConfig"] = {
+        "stopLossPct": 0.05,
+        "takeProfitPct": 0.05,
+    }
     engine = _execution_engine_with_signal(signal, mock_hyperliquid_client)
     monkeypatch.setattr(engine, "_require_live_gates", lambda wallet_id: None)
     monkeypatch.setattr(
@@ -226,6 +230,7 @@ def test_live_partial_fill_batches_aggregate_one_weighted_position(
     assert len(positions) == 1
     assert positions[0]["size"] == pytest.approx(1.0)
     assert positions[0]["entryPrice"] == pytest.approx(99.72)
+    assert positions[0]["protectiveStatus"] == "unprotected"
 
 
 def test_live_partial_fill_preserves_armed_protection_and_alerts(
