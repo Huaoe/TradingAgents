@@ -57,6 +57,15 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             margin REAL NOT NULL,
             status TEXT NOT NULL,
             mode TEXT NOT NULL DEFAULT 'paper',
+            stop_price REAL,
+            take_profit_price REAL,
+            trailing_stop_pct REAL,
+            trailing_watermark REAL,
+            exit_reason TEXT,
+            protective_status TEXT NOT NULL DEFAULT 'disabled',
+            exchange_stop_order_id TEXT,
+            exchange_take_profit_order_id TEXT,
+            trailing_unsupported INTEGER NOT NULL DEFAULT 0,
             opened_at TEXT NOT NULL,
             closed_at TEXT
         );
@@ -82,6 +91,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE orders ADD COLUMN type TEXT")
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE positions ADD COLUMN mode TEXT NOT NULL DEFAULT 'paper'")
+    for definition in (
+        "stop_price REAL",
+        "take_profit_price REAL",
+        "trailing_stop_pct REAL",
+        "trailing_watermark REAL",
+        "exit_reason TEXT",
+        "protective_status TEXT NOT NULL DEFAULT 'disabled'",
+        "exchange_stop_order_id TEXT",
+        "exchange_take_profit_order_id TEXT",
+        "trailing_unsupported INTEGER NOT NULL DEFAULT 0",
+    ):
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(f"ALTER TABLE positions ADD COLUMN {definition}")
     conn.execute(
         """
         UPDATE positions
@@ -134,6 +156,15 @@ def _row_to_position(row: sqlite3.Row) -> dict[str, Any]:
         "margin": row["margin"],
         "status": row["status"],
         "mode": row["mode"] or "paper",
+        "stopPrice": row["stop_price"],
+        "takeProfitPrice": row["take_profit_price"],
+        "trailingStopPct": row["trailing_stop_pct"],
+        "trailingWatermark": row["trailing_watermark"],
+        "exitReason": row["exit_reason"],
+        "protectiveStatus": row["protective_status"] or "disabled",
+        "exchangeStopOrderId": row["exchange_stop_order_id"],
+        "exchangeTakeProfitOrderId": row["exchange_take_profit_order_id"],
+        "trailingUnsupported": bool(row["trailing_unsupported"]),
         "openedAt": row["opened_at"],
         "closedAt": row["closed_at"],
     }
@@ -189,8 +220,10 @@ class ExecutionStore:
             """
             INSERT INTO positions (id, order_id, wallet_id, symbol, side, entry_price, mark_price,
                 size, notional, leverage, pnl, pnl_pct, liquidation_price, margin, status, mode,
-                opened_at, closed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                stop_price, take_profit_price, trailing_stop_pct, trailing_watermark, exit_reason,
+                protective_status, exchange_stop_order_id, exchange_take_profit_order_id,
+                trailing_unsupported, opened_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 position["id"],
@@ -209,6 +242,15 @@ class ExecutionStore:
                 position["margin"],
                 position["status"],
                 position.get("mode", "paper"),
+                position.get("stopPrice"),
+                position.get("takeProfitPrice"),
+                position.get("trailingStopPct"),
+                position.get("trailingWatermark"),
+                position.get("exitReason"),
+                position.get("protectiveStatus", "disabled"),
+                position.get("exchangeStopOrderId"),
+                position.get("exchangeTakeProfitOrderId"),
+                int(position.get("trailingUnsupported", False)),
                 position["openedAt"],
                 position.get("closedAt"),
             ),
@@ -281,7 +323,10 @@ class ExecutionStore:
         conn.execute(
             """
             UPDATE positions
-            SET mark_price = ?, pnl = ?, pnl_pct = ?, liquidation_price = ?, margin = ?, status = ?, closed_at = ?
+            SET mark_price = ?, pnl = ?, pnl_pct = ?, liquidation_price = ?, margin = ?, status = ?,
+                stop_price = ?, take_profit_price = ?, trailing_stop_pct = ?, trailing_watermark = ?,
+                exit_reason = ?, protective_status = ?, exchange_stop_order_id = ?,
+                exchange_take_profit_order_id = ?, trailing_unsupported = ?, closed_at = ?
             WHERE id = ?
             """,
             (
@@ -291,6 +336,15 @@ class ExecutionStore:
                 position.get("liquidationPrice"),
                 position["margin"],
                 position["status"],
+                position.get("stopPrice"),
+                position.get("takeProfitPrice"),
+                position.get("trailingStopPct"),
+                position.get("trailingWatermark"),
+                position.get("exitReason"),
+                position.get("protectiveStatus", "disabled"),
+                position.get("exchangeStopOrderId"),
+                position.get("exchangeTakeProfitOrderId"),
+                int(position.get("trailingUnsupported", False)),
                 position.get("closedAt"),
                 position["id"],
             ),

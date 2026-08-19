@@ -124,3 +124,5 @@ def test_position_mode_migrates_and_backfills_from_originating_order():
 
     assert position is not None
     assert position["mode"] == "live"
+    assert position["protectiveStatus"] == "disabled"
+    assert position["stopPrice"] is None

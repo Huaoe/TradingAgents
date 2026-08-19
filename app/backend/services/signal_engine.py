@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 
+from backend.models.strategy import RiskConfig
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.llm_cost import estimate_cost
 from backend.services.llm_tracker import LlmUsageTracker
@@ -83,6 +84,10 @@ def _build_signal(
     raw_cfg = strategy or {}
     risk_cfg = raw_cfg.get("riskConfig") or {}
     cfg = {**raw_cfg, **risk_cfg}
+    effective_risk_config = {
+        **cfg,
+        **RiskConfig.model_validate(cfg).model_dump(),
+    }
     long_funding_threshold = cfg.get("longFundingThreshold", -0.000005)
     short_funding_threshold = cfg.get("shortFundingThreshold", 0.000012)
     leverage = min(int(cfg.get("leverage", 3)), market.get("maxLeverage", 3))
@@ -254,6 +259,9 @@ def _build_signal(
             "candleFeatures": features,
             "funding": funding,
             "openInterest": oi,
+            "riskConfig": effective_risk_config,
+            "strategyTemplate": template,
+            "strategyIdentity": (strategy or {}).get("id") or (strategy or {}).get("name"),
         },
     }
 

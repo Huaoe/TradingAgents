@@ -110,6 +110,66 @@ class AlertEngine:
             related_id=related_id,
         )
 
+    def protective_unprotected(
+        self,
+        message: str,
+        wallet_id: str,
+        related_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="protective_exit",
+            severity="error",
+            message=message,
+            wallet_id=wallet_id,
+            related_id=related_id,
+        )
+
+    def protective_unsupported(
+        self,
+        position: dict[str, Any],
+        wallet_id: str,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="protective_exit",
+            severity="warning",
+            message=(
+                f"Live trailing stop is unsupported for {position['symbol']}; "
+                "Hyperliquid has no native trailing trigger."
+            ),
+            wallet_id=wallet_id,
+            related_id=position["id"],
+        )
+
+    def protective_triggered(
+        self,
+        position: dict[str, Any],
+        reason: str,
+        trigger_price: float,
+        wallet_id: str,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="protective_exit",
+            severity="warning",
+            message=(
+                f"{reason} triggered for {position['symbol']} at theoretical "
+                f"price {trigger_price:.8f}."
+            ),
+            wallet_id=wallet_id,
+            related_id=position["id"],
+        )
+
+    def kill_switch(
+        self,
+        wallet_id: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="kill_switch",
+            severity="error",
+            message=f"Kill switch invoked for {mode} mode.",
+            wallet_id=wallet_id,
+        )
+
     def journal_closed_trade(
         self,
         position: dict[str, Any],
