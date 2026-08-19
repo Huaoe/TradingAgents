@@ -122,6 +122,9 @@ export function Dashboard() {
           <span className={`px-2 py-1 rounded-full border text-xs ${account.mode === 'live' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
             {account.mode === 'live' ? 'LIVE' : 'PAPER'}
           </span>
+          <span className="px-2 py-1 rounded-full border border-gray-700 bg-gray-800/50 text-xs text-gray-300">
+            Balance: {account.balanceSource === 'exchange' ? 'exchange' : 'paper store'}
+          </span>
           {network && (
             <span className="px-2 py-1 rounded-full border border-sky-500/20 bg-sky-500/10 text-xs text-sky-400">
               {network.toUpperCase()}

@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob } from '../types';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob, ReconciliationResult } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -34,6 +34,17 @@ export async function fetchPositions(walletId?: string): Promise<Position[]> {
 export async function fetchOrders(walletId?: string): Promise<Order[]> {
   const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
   return api<Order[]>(`/api/orders${qs}`);
+}
+
+export async function fetchReconciliation(walletId: string): Promise<ReconciliationResult | null> {
+  return api<ReconciliationResult | null>(`/api/reconcile?wallet_id=${encodeURIComponent(walletId)}`);
+}
+
+export async function reconcileWallet(walletId: string): Promise<ReconciliationResult> {
+  return api<ReconciliationResult>('/api/reconcile', {
+    method: 'POST',
+    body: JSON.stringify({ walletId }),
+  });
 }
 
 export async function fetchAccount(walletId?: string): Promise<Account> {

@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.services.execution_store import ExecutionStore
+from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.llm_usage_store import LlmUsageStore
+from backend.services.wallet_store import WalletStore
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "portfolio.db")
 DEFAULT_PAPER_BALANCE = 10_000.0
@@ -115,6 +117,14 @@ class PortfolioStore:
         conn.commit()
         conn.close()
 
+    def list_live_wallet_ids(self) -> list[str]:
+        conn = _get_connection()
+        rows = conn.execute(
+            "SELECT wallet_id FROM wallet_balance WHERE live_enabled = 1"
+        ).fetchall()
+        conn.close()
+        return [str(row["wallet_id"]) for row in rows]
+
     def record_history(self, wallet_id: str, total_value: float) -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = _get_connection()
@@ -158,19 +168,66 @@ class PortfolioEngine:
     def __init__(self) -> None:
         self.execution_store = ExecutionStore()
         self.portfolio_store = PortfolioStore()
+        self.wallet_store = WalletStore()
+        self.client = HyperliquidClient()
 
     def summary(self, wallet_id: str | None = None) -> dict[str, Any]:
-        positions = self.execution_store.list_positions(wallet_id)
-        orders = self.execution_store.list_orders(wallet_id)
+        mode = "live" if wallet_id and self.portfolio_store.is_live_enabled(wallet_id) else "paper"
+        positions = [
+            position
+            for position in self.execution_store.list_positions(wallet_id)
+            if position.get("mode", "paper") == mode
+        ]
+        orders = [
+            order
+            for order in self.execution_store.list_orders(wallet_id)
+            if order.get("mode", "paper") == mode
+        ]
         balance = (
             self.portfolio_store.get_balance(wallet_id) if wallet_id else DEFAULT_PAPER_BALANCE
         )
+        balance_source = "paper_store"
+        exchange_total_value: float | None = None
+        exchange_margin_used: float | None = None
+        exchange_available: float | None = None
+        exchange_unrealized_pnl: float | None = None
+        exchange_total_notional: float | None = None
+        if mode == "live" and wallet_id:
+            wallet = self.wallet_store.get_wallet(wallet_id)
+            if wallet:
+                try:
+                    state = self.client.get_clearinghouse_state(wallet.address)
+                    margin = state.get("marginSummary") or state.get("crossMarginSummary") or {}
+                    exchange_total_value = float(margin.get("accountValue") or 0.0)
+                    exchange_margin_used = float(margin.get("totalMarginUsed") or 0.0)
+                    withdrawable = margin.get("withdrawable", state.get("withdrawable"))
+                    exchange_available = (
+                        float(withdrawable)
+                        if withdrawable is not None
+                        else max(0.0, exchange_total_value - exchange_margin_used)
+                    )
+                    exchange_asset_positions = state.get("assetPositions", [])
+                    exchange_unrealized_pnl = sum(
+                        float(item.get("position", {}).get("unrealizedPnl") or 0.0)
+                        for item in exchange_asset_positions
+                    )
+                    exchange_total_notional = sum(
+                        abs(float(item.get("position", {}).get("positionValue") or 0.0))
+                        for item in exchange_asset_positions
+                    )
+                    balance = exchange_total_value
+                    balance_source = "exchange"
+                except Exception:  # noqa: BLE001
+                    pass
 
         open_positions = [p for p in positions if p["status"] == "open"]
 
         margin_used = sum(p["margin"] for p in open_positions)
         unrealized_pnl = sum(p["pnl"] for p in open_positions)
         total_notional = sum(p["notional"] for p in open_positions)
+        if balance_source == "exchange":
+            unrealized_pnl = exchange_unrealized_pnl or 0.0
+            total_notional = exchange_total_notional or 0.0
 
         # Daily realized PnL from orders closed today.
         today = datetime.now(timezone.utc).date().isoformat()
@@ -180,8 +237,18 @@ class PortfolioEngine:
                 meta = order.get("meta") or {}
                 daily_pnl += float(meta.get("netPnl") or 0)
 
-        available = max(0.0, balance - margin_used)
-        total_value = balance + unrealized_pnl
+        available = (
+            exchange_available
+            if balance_source == "exchange" and exchange_available is not None
+            else max(0.0, balance - margin_used)
+        )
+        if balance_source == "exchange" and exchange_margin_used is not None:
+            margin_used = exchange_margin_used
+        total_value = (
+            exchange_total_value
+            if balance_source == "exchange" and exchange_total_value is not None
+            else balance + unrealized_pnl
+        )
 
         # Compute concentration.
         exposure_by_symbol: dict[str, float] = {}
@@ -196,9 +263,8 @@ class PortfolioEngine:
 
         return {
             "walletId": wallet_id,
-            "mode": "paper"
-            if wallet_id and not self.portfolio_store.is_live_enabled(wallet_id)
-            else "live",
+            "mode": mode,
+            "balanceSource": balance_source,
             "balance": round(balance, 2),
             "available": round(available, 2),
             "marginUsed": round(margin_used, 2),
@@ -234,8 +300,13 @@ class PortfolioEngine:
     ) -> None:
         """Raise ValueError if a proposed trade violates risk guardrails."""
         cfg = risk_config or {}
-        balance = self.portfolio_store.get_balance(wallet_id)
-        positions = self.execution_store.list_positions(wallet_id)
+        mode = "live" if self.portfolio_store.is_live_enabled(wallet_id) else "paper"
+        balance = self._account_balance(wallet_id, mode)
+        positions = [
+            position
+            for position in self.execution_store.list_positions(wallet_id)
+            if position.get("mode", "paper") == mode
+        ]
         open_positions = [p for p in positions if p["status"] == "open"]
 
         max_total_exposure = float(cfg.get("maxTotalExposure", balance * 0.5))
@@ -268,7 +339,11 @@ class PortfolioEngine:
 
         # Daily loss check.
         today = datetime.now(timezone.utc).date().isoformat()
-        orders = self.execution_store.list_orders(wallet_id)
+        orders = [
+            order
+            for order in self.execution_store.list_orders(wallet_id)
+            if order.get("mode", "paper") == mode
+        ]
         daily_pnl = 0.0
         for order in orders:
             if order["status"] == "closed" and order["timestamp"].startswith(today):
@@ -287,7 +362,21 @@ class PortfolioEngine:
         # Margin is still part of balance; we do not subtract it from total balance.
         # This method is a placeholder for future balance tracking.
 
-    def release_pnl(self, wallet_id: str, net_pnl: float) -> None:
-        """Adjust paper balance by realized PnL."""
+    def _account_balance(self, wallet_id: str, mode: str) -> float:
+        if mode == "live":
+            wallet = self.wallet_store.get_wallet(wallet_id)
+            if wallet:
+                try:
+                    state = self.client.get_clearinghouse_state(wallet.address)
+                    margin = state.get("marginSummary") or state.get("crossMarginSummary") or {}
+                    return float(margin.get("accountValue") or 0.0)
+                except Exception:  # noqa: BLE001
+                    pass
+        return self.portfolio_store.get_balance(wallet_id)
+
+    def release_pnl(self, wallet_id: str, net_pnl: float, mode: str = "paper") -> None:
+        """Adjust paper balance by realized PnL; exchange balances are read-only here."""
+        if mode == "live":
+            return
         balance = self.portfolio_store.get_balance(wallet_id)
         self.portfolio_store.set_balance(wallet_id, balance + net_pnl)

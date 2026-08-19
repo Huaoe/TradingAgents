@@ -5,6 +5,8 @@ from __future__ import annotations
 import httpx
 import pytest
 
+import backend.main as main_module
+import backend.services.execution_store as execution_store_module
 from backend.services.execution_store import ExecutionStore
 
 
@@ -43,6 +45,44 @@ def test_health_and_metrics(test_client):
     }
     assert expected_keys.issubset(set(body.keys()))
     assert body["total_backtests_run"] == 0
+
+
+def test_health_reports_degraded_database(test_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(execution_store_module, "DB_PATH", str(tmp_path))
+    main_module._HEALTH_CACHE = None
+
+    response = test_client.get("/api/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["sqlite"]["execution"]["status"] == "degraded"
+
+
+def test_health_reports_degraded_hyperliquid(test_client, mock_hyperliquid_client, monkeypatch):
+    def fail() -> list[dict]:
+        raise RuntimeError("info unavailable")
+
+    monkeypatch.setattr(mock_hyperliquid_client, "get_markets", fail)
+    main_module._HEALTH_CACHE = None
+
+    response = test_client.get("/api/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["dependencies"]["hyperliquid"]["status"] == "degraded"
+
+
+@pytest.mark.parametrize("value", ["true", "1", "yes"])
+def test_health_uses_shared_live_trading_gate(test_client, monkeypatch, value):
+    monkeypatch.setenv("LIVE_TRADING", value)
+    main_module._HEALTH_CACHE = None
+
+    response = test_client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["liveTradingEnabled"] is True
 
 
 def test_metrics_update_with_activity(test_client):

@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
@@ -18,10 +20,18 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from tradingagents.llm_clients import model_catalog
 
+import backend.services.alert_store as alert_store
+import backend.services.execution_store as execution_store
+import backend.services.llm_usage_store as llm_usage_store
+import backend.services.portfolio_engine as portfolio_engine
+import backend.services.signal_store as signal_store
+import backend.services.strategy_store as strategy_store_module
+import backend.services.wallet_store as wallet_store
 from backend.models.alert import AlertReadRequest
 from backend.models.backtest import BacktestRequest, BacktestResult
 from backend.models.execution import ClosePositionRequest, ExecuteRequest
 from backend.models.portfolio import LiveModeRequest, PortfolioSummary
+from backend.models.reconciliation import ReconcileRequest, ReconciliationResult
 from backend.models.signal import SignalCreate
 from backend.models.strategy import StrategyCreate, StrategyUpdate
 from backend.models.strategy_search import StrategySearchJob, StrategySearchRequest
@@ -31,8 +41,12 @@ from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
-from backend.services.hyperliquid_config import get_hyperliquid_network
+from backend.services.hyperliquid_config import (
+    get_hyperliquid_network,
+    is_live_trading_enabled,
+)
 from backend.services.portfolio_engine import PortfolioEngine
+from backend.services.reconciliation import ReconciliationService
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
 from backend.services.strategy_search import (
@@ -54,6 +68,9 @@ _MAX_SEARCH_JOBS = 5
 
 REFRESH_INTERVAL = 10
 HISTORY_INTERVAL = 60
+RECONCILIATION_INTERVAL = 60
+HEALTH_CACHE_SECONDS = 5
+_HEALTH_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
 async def _refresh_positions_loop() -> None:
@@ -76,21 +93,86 @@ async def _record_history_loop() -> None:
             logger.exception("Portfolio history snapshot failed: %s", exc)
 
 
+async def _reconciliation_loop() -> None:
+    service = ReconciliationService()
+    portfolio_store = PortfolioEngine().portfolio_store
+    wallet_store = WalletStore()
+    while True:
+        try:
+            for wallet_id in portfolio_store.list_live_wallet_ids():
+                wallet = wallet_store.get_wallet(wallet_id)
+                if wallet:
+                    await asyncio.to_thread(service.reconcile, wallet_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Reconciliation loop failed: %s", exc)
+        await asyncio.sleep(RECONCILIATION_INTERVAL)
+
+
+def _health_result() -> dict[str, Any]:
+    global _HEALTH_CACHE
+    now = time.monotonic()
+    if _HEALTH_CACHE and _HEALTH_CACHE[0] > now:
+        return _HEALTH_CACHE[1]
+
+    sqlite_paths = {
+        "alerts": alert_store.DB_PATH,
+        "execution": execution_store.DB_PATH,
+        "llmUsage": llm_usage_store.DB_PATH,
+        "portfolio": portfolio_engine.DB_PATH,
+        "signals": signal_store.DB_PATH,
+        "strategies": strategy_store_module.DB_PATH,
+        "wallets": wallet_store.DB_PATH,
+    }
+    sqlite_status: dict[str, Any] = {}
+    for name, path in sqlite_paths.items():
+        try:
+            if not os.path.exists(path):
+                sqlite_status[name] = {"status": "ok", "detail": "not initialized"}
+                continue
+            with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+                conn.execute("SELECT 1").fetchone()
+            sqlite_status[name] = {"status": "ok"}
+        except Exception as exc:  # noqa: BLE001
+            sqlite_status[name] = {"status": "degraded", "error": str(exc)}
+
+    client = HyperliquidClient()
+    try:
+        client.get_markets()
+        hyperliquid = {"status": "ok"}
+    except Exception as exc:  # noqa: BLE001
+        hyperliquid = {"status": "degraded", "error": str(exc)}
+    dependencies = {"sqlite": sqlite_status, "hyperliquid": hyperliquid}
+    db_ok = all(item["status"] == "ok" for item in sqlite_status.values())
+    result = {
+        "status": "ok" if db_ok and hyperliquid["status"] == "ok" else "degraded",
+        "network": get_hyperliquid_network(),
+        "liveTradingEnabled": is_live_trading_enabled(),
+        "dependencies": dependencies,
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
+    _HEALTH_CACHE = (now + HEALTH_CACHE_SECONDS, result)
+    return result
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Pre-warm the Hyperliquid Info client on startup.
     _ = HyperliquidClient()
     refresh_task = asyncio.create_task(_refresh_positions_loop())
     history_task = asyncio.create_task(_record_history_loop())
+    reconciliation_task = asyncio.create_task(_reconciliation_loop())
     try:
         yield
     finally:
         refresh_task.cancel()
         history_task.cancel()
+        reconciliation_task.cancel()
         with suppress(asyncio.CancelledError):
             await refresh_task
         with suppress(asyncio.CancelledError):
             await history_task
+        with suppress(asyncio.CancelledError):
+            await reconciliation_task
 
 
 app = FastAPI(
@@ -181,12 +263,23 @@ def _search_job_response(job_id: str) -> StrategySearchJob:
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
-    return {
-        "status": "ok",
-        "network": get_hyperliquid_network(),
-        "time": datetime.now(timezone.utc).isoformat(),
-    }
+async def health() -> dict[str, Any]:
+    return await asyncio.to_thread(_health_result)
+
+
+@app.post("/api/reconcile", response_model=ReconciliationResult)
+async def reconcile(payload: ReconcileRequest) -> ReconciliationResult:
+    result = await asyncio.to_thread(ReconciliationService().reconcile, payload.walletId)
+    return ReconciliationResult(**result)
+
+
+@app.get("/api/reconcile", response_model=ReconciliationResult | None)
+async def last_reconciliation(wallet_id: str) -> ReconciliationResult | None:
+    result = await asyncio.to_thread(
+        ExecutionStore().get_last_reconciliation,
+        wallet_id,
+    )
+    return ReconciliationResult(**result) if result else None
 
 
 @app.get("/api/metrics")

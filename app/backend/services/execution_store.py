@@ -56,9 +56,21 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             liquidation_price REAL,
             margin REAL NOT NULL,
             status TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'paper',
             opened_at TEXT NOT NULL,
             closed_at TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS reconciliations (
+            id TEXT PRIMARY KEY,
+            wallet_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            status TEXT NOT NULL,
+            divergences TEXT NOT NULL,
+            error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_reconciliations_wallet
+            ON reconciliations(wallet_id, timestamp);
         """
     )
     conn.commit()
@@ -68,6 +80,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Add missing columns to older stores idempotently."""
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE orders ADD COLUMN type TEXT")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute("ALTER TABLE positions ADD COLUMN mode TEXT NOT NULL DEFAULT 'paper'")
+    conn.execute(
+        """
+        UPDATE positions
+        SET mode = COALESCE(
+            (SELECT mode FROM orders WHERE orders.id = positions.order_id),
+            'paper'
+        )
+        WHERE EXISTS (SELECT 1 FROM orders WHERE orders.id = positions.order_id)
+        """
+    )
     conn.commit()
 
 
@@ -109,6 +133,7 @@ def _row_to_position(row: sqlite3.Row) -> dict[str, Any]:
         "liquidationPrice": row["liquidation_price"],
         "margin": row["margin"],
         "status": row["status"],
+        "mode": row["mode"] or "paper",
         "openedAt": row["opened_at"],
         "closedAt": row["closed_at"],
     }
@@ -163,8 +188,9 @@ class ExecutionStore:
         conn.execute(
             """
             INSERT INTO positions (id, order_id, wallet_id, symbol, side, entry_price, mark_price,
-                size, notional, leverage, pnl, pnl_pct, liquidation_price, margin, status, opened_at, closed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                size, notional, leverage, pnl, pnl_pct, liquidation_price, margin, status, mode,
+                opened_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 position["id"],
@@ -182,6 +208,7 @@ class ExecutionStore:
                 position.get("liquidationPrice"),
                 position["margin"],
                 position["status"],
+                position.get("mode", "paper"),
                 position["openedAt"],
                 position.get("closedAt"),
             ),
@@ -289,6 +316,50 @@ class ExecutionStore:
         conn.commit()
         conn.close()
         return order
+
+    def save_reconciliation(self, reconciliation: dict[str, Any]) -> dict[str, Any]:
+        conn = _get_connection()
+        conn.execute(
+            """
+            INSERT INTO reconciliations
+                (id, wallet_id, timestamp, status, divergences, error)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                reconciliation["id"],
+                reconciliation["walletId"],
+                reconciliation["timestamp"],
+                reconciliation["status"],
+                json.dumps(reconciliation.get("divergences", [])),
+                reconciliation.get("error"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return reconciliation
+
+    def get_last_reconciliation(self, wallet_id: str) -> dict[str, Any] | None:
+        conn = _get_connection()
+        row = conn.execute(
+            """
+            SELECT * FROM reconciliations
+            WHERE wallet_id = ?
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (wallet_id,),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "walletId": row["wallet_id"],
+            "timestamp": row["timestamp"],
+            "status": row["status"],
+            "divergences": json.loads(row["divergences"]),
+            "error": row["error"],
+        }
 
     def generate_ids(self) -> tuple[str, str]:
         return f"ord-{uuid.uuid4().hex[:8]}", f"pos-{uuid.uuid4().hex[:8]}"

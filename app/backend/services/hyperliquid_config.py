@@ -8,6 +8,7 @@ from hyperliquid.utils import constants
 
 NETWORK_ENV_VAR = "HYPERLIQUID_NETWORK"
 DEFAULT_NETWORK = "mainnet"
+LIVE_TRADING_ENV_VAR = "LIVE_TRADING"
 
 
 def get_hyperliquid_network(network: str | None = None) -> str:
@@ -25,3 +26,8 @@ def get_hyperliquid_base_url(network: str | None = None) -> str:
         if get_hyperliquid_network(network) == "mainnet"
         else constants.TESTNET_API_URL
     )
+
+
+def is_live_trading_enabled() -> bool:
+    """Return whether the process-wide live-trading gate is enabled."""
+    return os.getenv(LIVE_TRADING_ENV_VAR, "false").lower() in ("true", "1", "yes")

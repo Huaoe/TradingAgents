@@ -16,6 +16,7 @@ _DEFAULT_LONG_FUNDING = -0.000005
 _DEFAULT_SHORT_FUNDING = 0.000012
 _ARB_LONG_FUNDING = -0.000002
 _ARB_SHORT_FUNDING = 0.000011
+DB_PATH = str(Path(__file__).parent.parent / "data" / "strategies.db")
 
 
 def _risk_config(
@@ -341,7 +342,7 @@ class StrategyStore:
     def __new__(cls, db_path: str | None = None) -> StrategyStore:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            path = db_path or str(Path(__file__).parent.parent / "data" / "strategies.db")
+            path = db_path or DB_PATH
             cls._instance._db_path = path
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             cls._instance._init_db()

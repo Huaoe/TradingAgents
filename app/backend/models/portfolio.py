@@ -10,6 +10,7 @@ class PortfolioSummary(BaseModel):
 
     walletId: str | None
     mode: str
+    balanceSource: str
     balance: float
     available: float
     marginUsed: float

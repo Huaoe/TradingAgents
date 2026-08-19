@@ -81,6 +81,35 @@ class AlertEngine:
             wallet_id=wallet_id,
         )
 
+    def execution_divergence(
+        self,
+        message: str,
+        wallet_id: str,
+        related_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="execution_divergence",
+            severity="error",
+            message=message,
+            wallet_id=wallet_id,
+            related_id=related_id,
+        )
+
+    def reconciliation_divergence(
+        self,
+        message: str,
+        severity: str,
+        wallet_id: str,
+        related_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.store.create_alert(
+            type_="reconciliation",
+            severity=severity,
+            message=message,
+            wallet_id=wallet_id,
+            related_id=related_id,
+        )
+
     def journal_closed_trade(
         self,
         position: dict[str, Any],
