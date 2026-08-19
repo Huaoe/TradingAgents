@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TrendingUp, TrendingDown, Activity, DollarSign, Shield, Loader2, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { Card } from '../components/Card';
-import { fetchAccount, fetchSignals, fetchPositions, fetchPortfolioHistory } from '../services/api';
+import { fetchAccount, fetchHealth, fetchSignals, fetchPositions, fetchPortfolioHistory } from '../services/api';
 import { useWallet } from '../context/useWallet';
 import type { Account, Signal, Position, PortfolioHistoryPoint } from '../types';
 
@@ -34,6 +34,7 @@ export function Dashboard() {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [history, setHistory] = useState<PortfolioHistoryPoint[]>([]);
+  const [network, setNetwork] = useState<'mainnet' | 'testnet' | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -42,16 +43,18 @@ export function Dashboard() {
     setError('');
     try {
       const walletId = selectedWallet?.id;
-      const [a, s, p, h] = await Promise.all([
+      const [a, s, p, h, health] = await Promise.all([
         fetchAccount(walletId),
         fetchSignals(),
         fetchPositions(walletId),
         fetchPortfolioHistory(walletId, 100),
+        fetchHealth(),
       ]);
       setAccount(a);
       setSignals(s.slice(0, 3));
       setPositions(p.filter((pos) => pos.status === 'open'));
       setHistory(h);
+      setNetwork(health.network);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load dashboard');
     } finally {
@@ -119,6 +122,11 @@ export function Dashboard() {
           <span className={`px-2 py-1 rounded-full border text-xs ${account.mode === 'live' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
             {account.mode === 'live' ? 'LIVE' : 'PAPER'}
           </span>
+          {network && (
+            <span className="px-2 py-1 rounded-full border border-sky-500/20 bg-sky-500/10 text-xs text-sky-400">
+              {network.toUpperCase()}
+            </span>
+          )}
           <DollarSign className="w-4 h-4" />
           <span className="truncate max-w-[140px] sm:max-w-none">Wallet: {walletLabel}</span>
           <button

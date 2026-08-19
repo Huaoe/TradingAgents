@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import time
 
+import backend.services.hyperliquid_client as hyperliquid_client_module
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.hyperliquid_config import get_hyperliquid_base_url, get_hyperliquid_network
 
 
 class _FundingInfo:
@@ -108,3 +110,36 @@ def test_user_fees_are_keyed_and_cached():
     assert first["feeSchedule"]["tiers"]
     assert second == first
     assert info.calls == 1
+
+
+def test_network_resolution_defaults_to_testnet(monkeypatch):
+    monkeypatch.delenv("HYPERLIQUID_NETWORK", raising=False)
+    assert get_hyperliquid_network() == "testnet"
+    assert get_hyperliquid_base_url() != get_hyperliquid_base_url("mainnet")
+
+
+def test_client_rebuilds_info_and_caches_when_network_changes(monkeypatch):
+    calls = []
+
+    class FakeInfo:
+        def __init__(self, base_url, skip_ws):
+            calls.append((base_url, skip_ws))
+
+    monkeypatch.setattr(hyperliquid_client_module, "Info", FakeInfo)
+    HyperliquidClient._instance = None
+    HyperliquidClient._clear_caches()
+
+    monkeypatch.setenv("HYPERLIQUID_NETWORK", "testnet")
+    first = HyperliquidClient()
+    HyperliquidClient._market_cache["BTC"] = {"symbol": "BTC", "network": "testnet"}
+    HyperliquidClient._market_cache_expiry["BTC"] = time.monotonic() + 60
+
+    monkeypatch.setenv("HYPERLIQUID_NETWORK", "mainnet")
+    second = HyperliquidClient()
+
+    assert first is second
+    assert calls == [
+        (get_hyperliquid_base_url("testnet"), True),
+        (get_hyperliquid_base_url("mainnet"), True),
+    ]
+    assert "BTC" not in HyperliquidClient._market_cache

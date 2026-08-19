@@ -28,6 +28,7 @@ from backend.services.backtest import run_backtest
 from backend.services.execution_engine import ExecutionEngine
 from backend.services.execution_store import ExecutionStore
 from backend.services.hyperliquid_client import HyperliquidClient
+from backend.services.hyperliquid_config import get_hyperliquid_network
 from backend.services.portfolio_engine import PortfolioEngine
 from backend.services.signal_engine import generate_signal
 from backend.services.signal_store import SignalStore
@@ -105,7 +106,11 @@ class AnalyzeRequest(BaseModel):
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "network": get_hyperliquid_network(),
+        "time": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/metrics")
