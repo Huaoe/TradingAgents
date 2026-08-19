@@ -273,3 +273,104 @@ Add confidence through tests, logs, and monitoring.
 - App backend has >70% line coverage on service modules.
 - CI passes on pull requests.
 - `/api/health` reports database and Hyperliquid Info API connectivity.
+
+---
+
+# Phase 3 — Execution Realism, Security & Research
+
+Epics 15–16 were delivered in Sprint 12. Epics 17–20 are the current backlog, in priority order.
+
+## Progress
+
+| Epic | Status |
+|---|---|
+| Epic 15 — Hyperliquid-Accurate Execution Costs | Done (PR #14, #15, #16) |
+| Epic 16 — Strategy Search & Selection Discipline | Done (PR #17) |
+| Epic 17 — Security Remediation | **Not started — prerequisite for any live mainnet run** |
+| Epic 18 — Live-Trading Readiness | Not started |
+| Epic 19 — Research Depth | Not started |
+| Epic 20 — Frontend & Observability Debt | Not started |
+
+## Epic 15: Hyperliquid-Accurate Execution Costs *(Done)*
+
+Make simulated costs match what Hyperliquid actually charges, so a backtest result is a statement about the signal rather than about the fee model.
+
+**Delivered**
+- Maker and taker fees taken from the wallet's effective `userFees` instead of a hardcoded tier; `maker_fee` is now actually used, so limit-order variants can be modelled.
+- Slippage is configurable and defaults to a value measured by walking the live BTC book (`~0.00005`, versus the `0.0005` originally assumed).
+- Funding is charged per actual hourly stamp against current position notional, with the 4%/hour clamp.
+- Churn controls (`minHoldBars`, `cooldownBars`, `exitHysteresis`) and simulated `stopLossPct` / `takeProfitPct` / `trailingStopPct`.
+- Candlestick charting with volume and trade markers.
+- Safe live configuration: global `LIVE_TRADING` gate, per-wallet gate, mainnet/testnet resolution, leverage set before live orders.
+
+**Known limitation:** maker mode assumes a limit order fills at the bar price. There is no queue-position or fill-probability model, so maker results are an upper bound. The maker/taker gap (~3 bps vs ~10 bps round trip) is the entire edge for the funding templates, so this limitation decides whether those templates are viable.
+
+## Epic 16: Strategy Search & Selection Discipline *(Done)*
+
+Search parameter space without fooling ourselves that the winner will keep winning.
+
+**Delivered**
+- Anchored walk-forward: fold `f` trains on blocks `0..f-1` and is scored on block `f`; candidates rank on median out-of-sample per-bar Sharpe.
+- Deflated Sharpe Ratio against the number of trials, plus an in-sample-versus-out-of-sample rank correlation and per-regime (funding × volatility) breakdowns using shifted trailing statistics.
+- A work budget that rejects a search before it starts rather than running for hours.
+- A ~15x engine speedup found while profiling the sweep (per-bar timestamp reparsing and per-bar `df.iloc` row construction), verified byte-identical against the previous implementation.
+
+**Finding to carry forward:** on BTC 1h over 60 days, selection returned +0.16% against +7.06% buy-and-hold, with a DSR of 0.29 across 128 trials. The tool is working; the library has no demonstrated edge on this asset and period.
+
+## Epic 17: Security Remediation
+
+Close the findings from the project review. These were survivable while the app was testnet-only and localhost-only; PR #16 made mainnet the default, so they are not survivable now.
+
+**Scope**
+- Resolve SPA catch-all paths and reject anything outside `FRONTEND_DIST`. Today `GET /..%2f..%2fbackend%2fdata%2fwallets.db` returns the wallet database to an unauthenticated caller.
+- Remove `encryptedKey` and `salt` from every wallet API response; decryption stays server-side.
+- Untrack the seven runtime `.db` files (`alerts`, `execution`, `llm_usage`, `portfolio`, `signals`, `strategies`, `wallets`), add them to `.gitignore`, and rotate any key that was ever stored in the committed `wallets.db` — it must be treated as public.
+- Add an auth gate for mutating endpoints (bearer token from env at minimum) and default the server and container to loopback, with explicit opt-in to expose.
+
+**Definition of Done**
+- A traversal attempt returns 404 and a test asserts it.
+- No response body contains key material, asserted by a test.
+- `git ls-files` lists no `.db` file.
+- An unauthenticated request to an order-placing endpoint is rejected.
+
+## Epic 18: Live-Trading Readiness
+
+Make a live run's reported state match the exchange's actual state.
+
+**Scope**
+- Reconcile internal positions and fills against `clearinghouseState` and `userFills` on a timer; raise an alert on divergence rather than silently trusting local state.
+- Record actual fill price, fee and funding paid for live orders instead of assumed values, so live PnL is measured rather than estimated.
+- Make `/api/health` probe SQLite and the Hyperliquid Info API.
+- Exercise the kill switch on testnet including partial fills and rejected orders.
+- Declare `yfinance` in `app/pyproject.toml`; it is imported by the backtest fallback but undeclared, so a clean install breaks on that path.
+
+**Definition of Done**
+- A 24-hour testnet run ends with internal and exchange state in agreement, or with every divergence explained by a logged event.
+- `/api/health` returns a degraded status when SQLite or the Info API is unreachable.
+
+## Epic 19: Research Depth
+
+Look for an edge that survives out of sample, and be willing to conclude there isn't one.
+
+**Scope**
+- Persist search runs (request, candidate results, verdicts) so runs are comparable over time instead of re-derived each session.
+- Add purged and embargoed cross-validation alongside the anchored walk-forward to bound leakage from overlapping labels.
+- Sweep across assets and intervals; report which templates survive out of sample in more than one market, since a single-asset survivor is usually a coincidence.
+- Make regime conditioning actionable: allow a strategy to run only in the regimes where it survived, rather than only reporting the breakdown.
+- Report cost sensitivity per candidate (how much of the result the maker-fill assumption is carrying).
+
+**Definition of Done**
+- A search run can be reloaded and compared against an earlier one.
+- Either a template with out-of-sample survival across two or more assets, or a written conclusion that the current library has no tradable edge.
+
+## Epic 20: Frontend & Observability Debt
+
+**Scope**
+- Consolidate charting onto Lightweight Charts (Recharts still draws equity/drawdown, so both libraries ship; the main chunk is ~268 kB gzip).
+- Add frontend component tests for `Backtest`, `StrategyFinder` and `StrategyEditor` (US-14.3, still open).
+- Code-split the Strategy Finder and Backtest pages to get under the 500 kB chunk warning.
+- Track search-run latency and LLM spend per signal alongside the existing metrics.
+
+**Definition of Done**
+- One chart library in `package.json`, no chunk-size warning in `npm run build`.
+- Frontend component tests run in CI.
