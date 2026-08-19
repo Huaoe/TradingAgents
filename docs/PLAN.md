@@ -29,6 +29,38 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 9 — Alerts, Reflection & UI Polish | Epic 8 | Done (merged in PR #10) |
 | Sprint 10 — Stabilization & Launch Prep | — | Done (merged in PR #11) |
 | Sprint 11 — Phase 2 Hardening | Epics 9–14 | Done (merged in PR #12; Epic 14 partial — `/api/health` does not yet probe DB/Hyperliquid and frontend component tests are not added) |
+| Sprint 12 — Execution Realism & Strategy Research | Epics 15–16 | Done (merged in PR #14, #15, #16, #17) |
+| Sprint 13 — Security Remediation | Epic 17 | **Not started — blocks live mainnet trading** |
+| Sprint 14 — Live-Trading Readiness | Epic 18 | Not started |
+| Sprint 15 — Research Depth & Frontend Debt | Epics 19–20 | Not started |
+
+---
+
+## Current State (2026-08-19)
+
+`main` is at `a5a5f66`. 69 backend tests pass; `ruff check`, `npm run lint`, `tsc --noEmit` and `npm run build` are clean.
+
+**What works end to end:** market scanner, strategy library, backtest lab, multi-wallet storage, signal generation through `TradingAgentsGraph`, paper execution, portfolio/positions, alerts, and the Strategy Finder.
+
+**What Sprint 12 changed, and why it matters for expectations:**
+
+- Backtest costs are now Hyperliquid-calibrated (maker `0.00015` / taker `0.00045`, measured book slippage `~0.00005`, hourly funding on current notional with the 4%/hour clamp). Before this, fees alone consumed ~29% of the account on the churniest template, so *every* result was negative for accounting reasons rather than signal reasons.
+- Churn controls (`minHoldBars`, `cooldownBars`, `exitHysteresis`) and stop-loss / take-profit / trailing-stop are simulated, so a template's own trade management is finally being tested.
+- The Strategy Finder does anchored walk-forward selection over a parameter grid and reports a Deflated Sharpe Ratio, an in-sample-vs-out-of-sample rank correlation, and per-regime breakdowns.
+- **The honest read of the current results:** on BTC 1h over the last 60 days, walk-forward selection compounds to **+0.16%** against **+7.06%** buy-and-hold over the same test windows, and the winner's DSR is **0.29 across 128 trials** — i.e. not distinguishable from luck. No template in the library currently has demonstrated out-of-sample edge on this asset and period. Treat the library as a set of hypotheses to be tested, not a set of strategies to be run.
+
+**Known open risks (details in Epics 17–20):** the SPA catch-all in `app/backend/main.py` serves arbitrary files, `GET /api/wallets` returns `encryptedKey`, seven runtime `.db` files (including `wallets.db`) are tracked in git, and the API has no authentication — all of which became materially more dangerous when the default Hyperliquid network moved to mainnet in PR #16.
+
+---
+
+## Next Up — Prioritised
+
+| # | Work | Why now |
+|---|---|---|
+| 1 | Epic 17 — Security remediation | The app defaults to mainnet and has an unauthenticated arbitrary-file-read that exposes `wallets.db`. This must land before any real-money run. |
+| 2 | Epic 18 — Live-trading readiness | Live accounting, reconciliation and health probes are incomplete, so a live run currently cannot be trusted to report what it actually did. |
+| 3 | Epic 19 — Research depth | The library has no demonstrated edge yet; the Strategy Finder needs persisted runs, purged cross-validation and cross-asset sweeps to search for one honestly. |
+| 4 | Epic 20 — Frontend & observability debt | Two chart libraries ship in the bundle, `/api/health` is still a stub, and there are no frontend component tests. |
 
 ---
 
@@ -36,7 +68,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 | Layer | Stack |
 |---|---|
-| Frontend | Vite + React + TypeScript + Tailwind CSS + Recharts |
+| Frontend | Vite + React + TypeScript + Tailwind CSS + Recharts (equity/drawdown) + Lightweight Charts (candlesticks) |
 | Backend | FastAPI + Python 3.11+ |
 | Agent Engine | `TradingAgents` (upstream `TradingAgentsGraph`, `AssetType.CRYPTO`, structured schemas) |
 | Exchange | `hyperliquid-python-sdk` |
@@ -291,6 +323,70 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
+### Sprint 12 — Execution Realism & Strategy Research *(Done)*
+**Goal:** Make backtests reflect Hyperliquid's actual conditions, and add a defensible way to compare strategies.
+
+**Epics:** Epic 15, Epic 16
+
+**Delivered**
+1. Maker/taker fees pulled from the wallet's effective `userFees`, configurable slippage, hourly funding on current notional with the 4%/hour clamp (PR #14).
+2. Churn controls and simulated stop-loss / take-profit / trailing-stop (PR #14).
+3. Lightweight Charts candlesticks with volume pane and trade markers (PR #15).
+4. Safe live configuration: `LIVE_TRADING` gate, per-wallet gate, mainnet/testnet resolution, leverage set before live orders (PR #16).
+5. Strategy Finder: anchored walk-forward search, Deflated Sharpe Ratio, rank correlation, regime breakdowns (PR #17).
+
+**Milestone:** A backtest's costs match Hyperliquid within a basis point or two, and a strategy comparison states whether its winner is distinguishable from noise.
+
+---
+
+### Sprint 13 — Security Remediation *(Next)*
+**Goal:** Make the app safe to run against a mainnet wallet.
+
+**Epic:** Epic 17
+
+**Tasks**
+1. Constrain the SPA catch-all to files resolved inside `FRONTEND_DIST`, and reject anything that escapes it.
+2. Stop returning `encryptedKey` (and `salt`) from any wallet endpoint; keep them server-side only.
+3. Untrack all seven runtime `.db` files, add them to `.gitignore`, and treat any key ever stored in the committed `wallets.db` as compromised — rotate it.
+4. Add a local auth gate (bearer token from env, or bind to loopback by default) so mutating endpoints are not open to anything that can reach the port.
+5. Default the container to `127.0.0.1` publishing, and require an explicit opt-in to expose it.
+
+**Milestone:** A path-traversal attempt returns 404, no endpoint returns key material, and an unauthenticated caller cannot place an order.
+
+---
+
+### Sprint 14 — Live-Trading Readiness
+**Goal:** Make a live run's reported state match the exchange's actual state.
+
+**Epic:** Epic 18
+
+**Tasks**
+1. Reconcile internal positions/fills against `clearinghouseState` and `userFills` on a timer; surface divergence as an alert.
+2. Complete live accounting: record actual fill price, fee and funding paid, rather than assumed values.
+3. Make `/api/health` probe SQLite and the Hyperliquid Info API rather than returning a static `ok`.
+4. Test the kill switch against testnet, including partial-fill and rejected-order paths.
+5. Declare `yfinance` in `app/pyproject.toml` (it is imported by the backtest fallback but undeclared).
+
+**Milestone:** A testnet run for 24 hours ends with internal state and exchange state in agreement, with any divergence explained.
+
+---
+
+### Sprint 15 — Research Depth & Frontend Debt
+**Goal:** Search for a real edge, and pay down UI/observability debt.
+
+**Epics:** Epic 19, Epic 20
+
+**Tasks**
+1. Persist search runs so results are comparable over time instead of re-derived per session.
+2. Add purged/embargoed cross-validation alongside the anchored walk-forward, so overlapping-label leakage is bounded.
+3. Sweep across assets and intervals, and report which templates survive out of sample in more than one market.
+4. Make regime conditioning actionable: allow a strategy to be enabled only in the regimes where it survived.
+5. Consolidate charts onto one library and add frontend component tests for `Backtest`, `StrategyFinder` and `StrategyEditor`.
+
+**Milestone:** Either a template with out-of-sample survival across at least two assets, or a documented conclusion that the current library has no edge worth trading.
+
+---
+
 ## Execution Order Summary
 
 | Sprint | Epic Focus |
@@ -307,6 +403,10 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | 9 | Epic 8 — Alerts, reflection, UI polish |
 | 10 | Stabilization & release |
 | 11 | Epics 9–14 — Packaging, correctness, live PnL, security, frontend polish, testing |
+| 12 | Epics 15–16 — Hyperliquid-accurate costs, charts, safe live config, walk-forward strategy search |
+| 13 | Epic 17 — Security remediation (blocks mainnet) |
+| 14 | Epic 18 — Live-trading readiness and reconciliation |
+| 15 | Epics 19–20 — Research depth, chart consolidation, frontend tests |
 
 ---
 
@@ -319,6 +419,8 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Live trading losses | Mandatory 7-day paper run before live; hard stop-loss and position caps. |
 | Encrypted secret loss | Document key backup; never store plaintext; test recovery flow. |
 | Scope creep | Stick to one epic per sprint; defer NFT/Polymarket exchange integration to V2. |
+| Overfitting a "winner" | Rank on out-of-sample only, report the Deflated Sharpe Ratio for the number of trials, and refuse to promote a candidate whose DSR is not significant. |
+| Mainnet default + open API | Treat Epic 17 as a prerequisite for any live run; keep `LIVE_TRADING=false` and the per-wallet gate off until it lands. |
 
 ---
 

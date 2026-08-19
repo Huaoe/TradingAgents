@@ -428,3 +428,60 @@ Acceptance criteria use:
 **Acceptance Criteria**
 - Given a backtest runs, when it completes, then a structured log line is emitted with `duration_ms`, `symbol`, `interval`, and `total_return_pct`.
 - Given I call `/api/health`, when the backend is healthy, then it returns `status: ok` plus `db: ok` and `hyperliquid: ok`.
+
+---
+
+## Epic 16: Strategy Search & Selection Discipline *(Done)*
+
+### US-16.1 Search parameter space with walk-forward validation
+**As a** trader, **I want** every template and parameter variant scored on data it was not selected on, **so that** the ranking is not just a record of what fitted best.
+
+**Acceptance Criteria**
+- Given a symbol, interval and date range, when I run a search, then each fold trains on all earlier blocks and is scored on the next unseen block only.
+- Given a candidate that never traded in a fold, when results are aggregated, then that fold is scored zero rather than dropped from its median.
+
+### US-16.2 Know whether the winner is luck
+**As a** trader, **I want** the winner's Sharpe discounted by the number of variants tried, **so that** I do not trade the luckiest of 128 coin flips.
+
+**Acceptance Criteria**
+- Given a completed search, when I read the verdicts, then a Deflated Sharpe Ratio is shown with an explicit significant/not-significant statement and the trial count.
+- Given too few trials or observations to compute it, when I read the verdicts, then a reason is shown instead of a fabricated number.
+
+### US-16.3 See performance by market regime
+**As a** trader, **I want** results broken down by funding and volatility regime, **so that** I can ask when a strategy worked rather than whether it worked.
+
+**Acceptance Criteria**
+- Given a candidate's trades, when the breakdown is computed, then each trade is attributed to the regime observable at or before entry, using shifted trailing statistics.
+- Given a bucket with fewer than five trades, when it is displayed, then it is marked as a thin sample rather than hidden.
+
+---
+
+## Epic 17: Security Remediation *(Next)*
+
+### US-17.1 Stop the SPA route serving arbitrary files
+**As an** operator, **I want** the frontend catch-all to serve only files inside the build directory, **so that** the wallet database cannot be downloaded over HTTP.
+
+**Acceptance Criteria**
+- Given a request whose path resolves outside `FRONTEND_DIST` (including percent-encoded traversal), when it hits the catch-all, then the response is 404 and no file content is returned.
+- Given the traversal path used in the review (`/..%2f..%2fbackend%2fdata%2fwallets.db`), when a test requests it, then the test asserts a 404.
+
+### US-17.2 Never return wallet key material
+**As a** wallet owner, **I want** key material to stay server-side, **so that** reading an API response cannot start an offline attack on my private key.
+
+**Acceptance Criteria**
+- Given any wallet endpoint, when it returns a wallet, then the body contains neither `encryptedKey` nor `salt`.
+- Given the frontend, when it lists wallets, then it still works without those fields.
+
+### US-17.3 Remove runtime databases from version control
+**As a** maintainer, **I want** no `.db` file tracked in git, **so that** a clone does not hand over stored wallets and history.
+
+**Acceptance Criteria**
+- Given a fresh clone, when I run `git ls-files`, then no `.db` path is listed and `.gitignore` covers `app/backend/data/*.db`.
+- Given the previously committed `wallets.db`, when remediation is complete, then any key it held has been rotated and this is recorded in the runbook.
+
+### US-17.4 Require authentication for mutating endpoints
+**As an** operator, **I want** state-changing endpoints to require a token, **so that** anything that can reach the port cannot place orders or add wallets.
+
+**Acceptance Criteria**
+- Given no or a wrong token, when a request hits a mutating endpoint, then it is rejected with 401 and no state changes.
+- Given no explicit opt-in, when the backend or container starts, then it binds to loopback rather than `0.0.0.0`.
