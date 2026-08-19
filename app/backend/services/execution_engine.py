@@ -240,20 +240,28 @@ class ExecutionEngine:
             weighted_entry = (
                 previous_size * float(existing["entryPrice"]) + fill_notional
             ) / total_size
-            trailing_watermark = protective["trailingWatermark"]
-            if existing.get("trailingWatermark") is not None:
-                if side == "Buy" and trailing_watermark is not None:
-                    trailing_watermark = max(
-                        float(existing["trailingWatermark"]),
-                        float(trailing_watermark),
-                    )
-                elif side == "Sell" and trailing_watermark is not None:
-                    trailing_watermark = min(
-                        float(existing["trailingWatermark"]),
-                        float(trailing_watermark),
-                    )
-                else:
-                    trailing_watermark = existing["trailingWatermark"]
+            armed_protection = bool(
+                existing.get("exchangeStopOrderId")
+                or existing.get("exchangeTakeProfitOrderId")
+            )
+            protection_misaligned = armed_protection and order["mode"] == "live"
+            was_unprotected = existing.get("protectiveStatus") == "unprotected"
+            trailing_watermark = existing.get("trailingWatermark")
+            if not armed_protection:
+                trailing_watermark = protective["trailingWatermark"]
+                if existing.get("trailingWatermark") is not None:
+                    if side == "Buy" and trailing_watermark is not None:
+                        trailing_watermark = max(
+                            float(existing["trailingWatermark"]),
+                            float(trailing_watermark),
+                        )
+                    elif side == "Sell" and trailing_watermark is not None:
+                        trailing_watermark = min(
+                            float(existing["trailingWatermark"]),
+                            float(trailing_watermark),
+                        )
+                    else:
+                        trailing_watermark = existing["trailingWatermark"]
             existing.update(
                 {
                     "entryPrice": weighted_entry,
@@ -271,35 +279,43 @@ class ExecutionEngine:
                     )
                     if order["leverage"]
                     else round(weighted_entry * total_size, 2),
-                    "stopPrice": protective["stopPrice"],
-                    "takeProfitPrice": protective["takeProfitPrice"],
-                    "trailingStopPct": protective["trailingStopPct"],
                     "trailingWatermark": trailing_watermark,
                     "protectiveStatus": (
-                        "pending"
-                        if any(
-                            position_level is not None
-                            for position_level in (
-                                protective["stopPrice"],
-                                protective["takeProfitPrice"],
-                                protective["trailingStopPct"],
+                        "unprotected"
+                        if protection_misaligned
+                        else (
+                            "pending"
+                            if any(
+                                position_level is not None
+                                for position_level in (
+                                    protective["stopPrice"],
+                                    protective["takeProfitPrice"],
+                                    protective["trailingStopPct"],
+                                )
                             )
+                            else "disabled"
                         )
-                        else "disabled"
                     ),
                     "trailingUnsupported": order["mode"] == "live"
                     and float(risk_config.get("trailingStopPct") or 0.0) > 0,
                 }
             )
+            if not armed_protection:
+                existing.update(
+                    {
+                        "stopPrice": protective["stopPrice"],
+                        "takeProfitPrice": protective["takeProfitPrice"],
+                        "trailingStopPct": protective["trailingStopPct"],
+                    }
+                )
             self.store.update_position(existing)
-            if (
-                order["mode"] == "live"
-                and existing["protectiveStatus"] == "pending"
-                and not existing.get("exchangeStopOrderId")
-                and not existing.get("exchangeTakeProfitOrderId")
-            ):
-                existing["protectiveStatus"] = "unprotected"
-                self.store.update_position(existing)
+            if protection_misaligned and not was_unprotected:
+                self.alert_engine.execution_divergence(
+                    "Live protective triggers cover only part of the position and remain "
+                    "priced off the original entry; manual re-arming is required.",
+                    order["walletId"],
+                    existing["id"],
+                )
             return self._normalize_position_side(existing)
 
         _, position_id = self.store.generate_ids()

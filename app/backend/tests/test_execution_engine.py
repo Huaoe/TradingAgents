@@ -228,6 +228,101 @@ def test_live_partial_fill_batches_aggregate_one_weighted_position(
     assert positions[0]["entryPrice"] == pytest.approx(99.72)
 
 
+def test_live_partial_fill_preserves_armed_protection_and_alerts(
+    isolated_stores, mock_hyperliquid_client
+):
+    store = ExecutionStore()
+    order = {
+        "id": "ord-armed-partial",
+        "signalId": "sig-armed-partial",
+        "walletId": "wallet-live",
+        "symbol": "BTC",
+        "side": "Buy",
+        "size": 1.0,
+        "price": 99.0,
+        "notional": 99.0,
+        "leverage": 2,
+        "fees": 0.0,
+        "type": "Limit",
+        "mode": "live",
+        "status": "partially_filled",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "meta": {},
+        "limitPrice": 99.0,
+        "tif": "Gtc",
+        "filledSize": 0.4,
+        "exchangeOrderId": "90",
+    }
+    store.create_order(order)
+    store.create_position(
+        {
+            "id": "pos-armed-partial",
+            "orderId": order["id"],
+            "walletId": order["walletId"],
+            "symbol": "BTC",
+            "side": "Buy",
+            "entryPrice": 99.0,
+            "markPrice": 99.0,
+            "size": 0.4,
+            "notional": 39.6,
+            "leverage": 2,
+            "pnl": 0.0,
+            "pnlPct": 0.0,
+            "liquidationPrice": 49.5,
+            "margin": 19.8,
+            "status": "open",
+            "mode": "live",
+            "stopPrice": 95.0,
+            "takeProfitPrice": 105.0,
+            "trailingStopPct": 0.01,
+            "trailingWatermark": 99.0,
+            "exitReason": None,
+            "protectiveStatus": "armed",
+            "exchangeStopOrderId": "91",
+            "exchangeTakeProfitOrderId": "92",
+            "trailingUnsupported": False,
+            "openedAt": datetime.now(timezone.utc).isoformat(),
+            "closedAt": None,
+        }
+    )
+    alerts = []
+    engine = ExecutionEngine()
+    engine.store = store
+    engine.client = mock_hyperliquid_client
+    engine.alert_engine = SimpleNamespace(
+        execution_divergence=lambda *args: alerts.append(args),
+    )
+    wallet = SimpleNamespace(address="0xabc")
+
+    engine._settle_pending_fill(
+        order,
+        wallet,
+        fill_price=101.0,
+        filled_size=0.6,
+        fees=0.0,
+        risk_config={
+            "stopLossPct": 0.05,
+            "takeProfitPct": 0.05,
+            "trailingStopPct": 0.01,
+        },
+    )
+
+    position = store.get_position("pos-armed-partial")
+    assert position is not None
+    assert position["size"] == pytest.approx(1.0)
+    assert position["entryPrice"] == pytest.approx(100.2)
+    assert position["stopPrice"] == pytest.approx(95.0)
+    assert position["takeProfitPrice"] == pytest.approx(105.0)
+    assert position["trailingStopPct"] == pytest.approx(0.01)
+    assert position["trailingWatermark"] == pytest.approx(99.0)
+    assert position["protectiveStatus"] == "unprotected"
+    assert position["exchangeStopOrderId"] == "91"
+    assert position["exchangeTakeProfitOrderId"] == "92"
+    assert len(alerts) == 1
+    assert "cover only part of the position" in alerts[0][0]
+    assert "manual re-arming is required" in alerts[0][0]
+
+
 def test_live_pending_monitor_reads_exchange_once_per_wallet(
     monkeypatch, mock_hyperliquid_client
 ):
