@@ -51,10 +51,10 @@ export interface Position {
   status: string;
   mode: 'paper' | 'live';
   pnlSource?: 'exchange' | 'mark_price';
-  stopPrice?: number;
-  takeProfitPrice?: number;
-  trailingStopPct?: number;
-  trailingWatermark?: number;
+  stopPrice: number | null;
+  takeProfitPrice: number | null;
+  trailingStopPct: number | null;
+  trailingWatermark: number | null;
   exitReason?: string;
   protectiveStatus?: string;
   exchangeStopOrderId?: string;
