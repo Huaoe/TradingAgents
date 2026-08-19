@@ -221,7 +221,6 @@ class PortfolioEngine:
                     pass
 
         open_positions = [p for p in positions if p["status"] == "open"]
-
         margin_used = sum(p["margin"] for p in open_positions)
         unrealized_pnl = sum(p["pnl"] for p in open_positions)
         total_notional = sum(p["notional"] for p in open_positions)
@@ -308,6 +307,18 @@ class PortfolioEngine:
             if position.get("mode", "paper") == mode
         ]
         open_positions = [p for p in positions if p["status"] == "open"]
+        pending_orders = self.execution_store.list_pending_orders(wallet_id, mode)
+        pending_notional = sum(
+            max(0.0, float(order["size"]) - float(order.get("filledSize") or 0.0))
+            * float(order.get("limitPrice") or order["price"])
+            for order in pending_orders
+        )
+        pending_symbol_notional = sum(
+            max(0.0, float(order["size"]) - float(order.get("filledSize") or 0.0))
+            * float(order.get("limitPrice") or order["price"])
+            for order in pending_orders
+            if order["symbol"] == symbol
+        )
 
         max_total_exposure = float(cfg.get("maxTotalExposure", balance * 0.5))
         max_position_size = float(cfg.get("maxPositionSize", balance * 0.2))
@@ -315,9 +326,11 @@ class PortfolioEngine:
         daily_loss_limit = float(cfg.get("dailyLossLimit", balance * 0.05))
         max_leverage = int(cfg.get("maxLeverage", 20))
 
-        total_notional = sum(p["notional"] for p in open_positions) + notional
+        total_notional = sum(p["notional"] for p in open_positions) + pending_notional + notional
         symbol_exposure = (
-            sum(p["notional"] for p in open_positions if p["symbol"] == symbol) + notional
+            sum(p["notional"] for p in open_positions if p["symbol"] == symbol)
+            + pending_symbol_notional
+            + notional
         )
 
         if notional > max_position_size:
@@ -327,13 +340,18 @@ class PortfolioEngine:
         if total_notional > max_total_exposure:
             raise ValueError(
                 f"Total exposure ${total_notional:.2f} exceeds limit ${max_total_exposure:.2f}"
+                + (" because of pending orders" if pending_notional else "")
             )
         if symbol_exposure > max_total_exposure * 0.5:
             raise ValueError(
                 f"{symbol} concentration ${symbol_exposure:.2f} exceeds 50% of total exposure limit"
+                + (" because of pending orders" if pending_symbol_notional else "")
             )
-        if len(open_positions) >= max_positions:
-            raise ValueError(f"Max open positions ({max_positions}) reached")
+        if len(open_positions) + len(pending_orders) >= max_positions:
+            raise ValueError(
+                f"Max open positions ({max_positions}) reached"
+                + (" because of pending orders" if pending_orders else "")
+            )
         if leverage > max_leverage:
             raise ValueError(f"Leverage {leverage}x exceeds max {max_leverage}x")
 

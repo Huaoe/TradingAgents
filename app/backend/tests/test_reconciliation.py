@@ -8,12 +8,20 @@ from backend.services.reconciliation import ReconciliationService, _size_matches
 
 
 class FakeStore:
-    def __init__(self, positions: list[dict]) -> None:
+    def __init__(
+        self,
+        positions: list[dict],
+        pending_orders: list[dict] | None = None,
+    ) -> None:
         self.positions = positions
+        self.pending_orders = pending_orders or []
         self.saved: list[dict] = []
 
     def list_open_positions(self, wallet_id: str) -> list[dict]:
         return self.positions
+
+    def list_pending_orders(self, wallet_id: str, mode: str) -> list[dict]:
+        return self.pending_orders
 
     def get_last_reconciliation(self, wallet_id: str) -> dict | None:
         return self.saved[-1] if self.saved else None
@@ -39,11 +47,15 @@ class FakeAlerts:
 
 
 class FakeClient:
-    def __init__(self, state: dict) -> None:
+    def __init__(self, state: dict, open_orders: list[dict] | None = None) -> None:
         self.state = state
+        self.open_orders = open_orders or []
 
     def get_clearinghouse_state(self, address: str, *, force: bool = False) -> dict:
         return self.state
+
+    def get_open_orders(self, address: str, *, force: bool = False) -> list[dict]:
+        return self.open_orders
 
 
 class FakeWallets:
@@ -194,3 +206,30 @@ def test_reconciliation_for_paper_wallet_is_not_applicable():
 
     assert result["status"] == "not_applicable"
     assert "not enabled" in result["error"]
+
+
+def test_reconciliation_reports_order_divergences():
+    local_order = {
+        "id": "ord-local",
+        "walletId": "wallet-1",
+        "symbol": "BTC",
+        "exchangeOrderId": "101",
+        "mode": "live",
+        "status": "resting",
+    }
+    store = FakeStore([], [local_order])
+    service = ReconciliationService(
+        client=FakeClient(
+            _state(),
+            [{"oid": 202, "coin": "ETH"}],
+        ),
+        store=store,
+        wallet_store=FakeWallets(),
+        portfolio_store=FakePortfolio(),
+        alert_engine=FakeAlerts(),
+    )
+
+    result = service.reconcile("wallet-1")
+
+    kinds = {item["type"] for item in result["divergences"]}
+    assert kinds == {"local_order_missing_on_exchange", "untracked_exchange_order"}

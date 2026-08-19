@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "execution.db")
@@ -37,7 +38,13 @@ def _init_tables(conn: sqlite3.Connection) -> None:
             mode TEXT NOT NULL,
             status TEXT NOT NULL,
             timestamp TEXT NOT NULL,
-            meta TEXT
+            meta TEXT,
+            limit_price REAL,
+            tif TEXT,
+            filled_size REAL NOT NULL DEFAULT 0,
+            expires_at TEXT,
+            exchange_order_id TEXT,
+            updated_at TEXT
         );
 
         CREATE TABLE IF NOT EXISTS positions (
@@ -89,6 +96,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Add missing columns to older stores idempotently."""
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE orders ADD COLUMN type TEXT")
+    for definition in (
+        "limit_price REAL",
+        "tif TEXT",
+        "filled_size REAL NOT NULL DEFAULT 0",
+        "expires_at TEXT",
+        "exchange_order_id TEXT",
+        "updated_at TEXT",
+    ):
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(f"ALTER TABLE orders ADD COLUMN {definition}")
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute("ALTER TABLE positions ADD COLUMN mode TEXT NOT NULL DEFAULT 'paper'")
     for definition in (
@@ -135,6 +152,12 @@ def _row_to_order(row: sqlite3.Row) -> dict[str, Any]:
         "status": row["status"],
         "timestamp": row["timestamp"],
         "meta": json.loads(meta) if meta else None,
+        "limitPrice": row["limit_price"],
+        "tif": row["tif"],
+        "filledSize": row["filled_size"] or 0.0,
+        "expiresAt": row["expires_at"],
+        "exchangeOrderId": row["exchange_order_id"],
+        "updatedAt": row["updated_at"],
     }
 
 
@@ -189,8 +212,9 @@ class ExecutionStore:
         conn.execute(
             """
             INSERT INTO orders (id, signal_id, wallet_id, symbol, side, size, price, notional,
-                leverage, fees, type, mode, status, timestamp, meta)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                leverage, fees, type, mode, status, timestamp, meta, limit_price, tif,
+                filled_size, expires_at, exchange_order_id, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 order["id"],
@@ -208,6 +232,12 @@ class ExecutionStore:
                 order["status"],
                 order["timestamp"],
                 json.dumps(order.get("meta")),
+                order.get("limitPrice"),
+                order.get("tif"),
+                order.get("filledSize", 0.0),
+                order.get("expiresAt"),
+                order.get("exchangeOrderId"),
+                order.get("updatedAt") or order["timestamp"],
             ),
         )
         conn.commit()
@@ -362,14 +392,97 @@ class ExecutionStore:
         return _row_to_order(row)
 
     def update_order(self, order: dict[str, Any]) -> dict[str, Any]:
+        updated_at = order.get("updatedAt") or datetime.now(timezone.utc).isoformat()
+        order["updatedAt"] = updated_at
         conn = _get_connection()
         conn.execute(
-            "UPDATE orders SET status = ?, meta = ? WHERE id = ?",
-            (order["status"], json.dumps(order.get("meta")), order["id"]),
+            """
+            UPDATE orders
+            SET price = ?, notional = ?, fees = ?, type = ?, status = ?, meta = ?,
+                limit_price = ?, tif = ?, filled_size = ?, expires_at = ?,
+                exchange_order_id = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                order["price"],
+                order["notional"],
+                order["fees"],
+                order.get("type", "Market"),
+                order["status"],
+                json.dumps(order.get("meta")),
+                order.get("limitPrice"),
+                order.get("tif"),
+                order.get("filledSize", 0.0),
+                order.get("expiresAt"),
+                order.get("exchangeOrderId"),
+                updated_at,
+                order["id"],
+            ),
         )
         conn.commit()
         conn.close()
         return order
+
+    def list_pending_orders(
+        self,
+        wallet_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[dict[str, Any]]:
+        conn = _get_connection()
+        clauses = ["status IN ('resting', 'partially_filled')"]
+        params: list[Any] = []
+        if wallet_id:
+            clauses.append("wallet_id = ?")
+            params.append(wallet_id)
+        if mode:
+            clauses.append("mode = ?")
+            params.append(mode)
+        rows = conn.execute(
+            f"SELECT * FROM orders WHERE {' AND '.join(clauses)} ORDER BY timestamp ASC",
+            params,
+        ).fetchall()
+        conn.close()
+        return [_row_to_order(row) for row in rows]
+
+    def list_resting_orders(
+        self,
+        wallet_id: str | None = None,
+        mode: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.list_pending_orders(wallet_id, mode)
+
+    def update_order_progress(
+        self,
+        order_id: str,
+        filled_size: float,
+        status: str,
+        *,
+        fees: float | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        order = self.get_order(order_id)
+        if not order:
+            return None
+        order["filledSize"] = filled_size
+        order["status"] = status
+        if fees is not None:
+            order["fees"] = fees
+        if meta is not None:
+            order["meta"] = meta
+        return self.update_order(order)
+
+    def get_order_by_exchange_id(
+        self,
+        wallet_id: str,
+        exchange_order_id: str,
+    ) -> dict[str, Any] | None:
+        conn = _get_connection()
+        row = conn.execute(
+            "SELECT * FROM orders WHERE wallet_id = ? AND exchange_order_id = ?",
+            (wallet_id, exchange_order_id),
+        ).fetchone()
+        conn.close()
+        return _row_to_order(row) if row else None
 
     def save_reconciliation(self, reconciliation: dict[str, Any]) -> dict[str, Any]:
         conn = _get_connection()

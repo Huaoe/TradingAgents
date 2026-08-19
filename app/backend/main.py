@@ -658,6 +658,10 @@ async def execute_trade(payload: ExecuteRequest) -> dict[str, Any]:
             payload.walletId,
             payload.mode,
             payload.masterPassword,
+            payload.orderType,
+            payload.limitPrice,
+            payload.tif,
+            payload.expireMinutes,
         )
         return result
     except ValueError as exc:

@@ -14,6 +14,10 @@ class ExecuteRequest(BaseModel):
     walletId: str
     mode: Literal["paper", "live"] = "paper"
     masterPassword: str | None = None
+    orderType: Literal["market", "limit"] = "market"
+    limitPrice: float | None = None
+    tif: Literal["Alo", "Gtc", "Ioc"] = "Alo"
+    expireMinutes: float | None = None
 
 
 class ClosePositionRequest(BaseModel):
@@ -26,12 +30,12 @@ class ClosePositionRequest(BaseModel):
 
 
 class CancelOrderRequest(BaseModel):
-    """Cancel one resting live exchange order."""
+    """Cancel one resting order."""
 
     walletId: str
     symbol: str
     orderId: str
-    masterPassword: str
+    masterPassword: str | None = None
 
 
 class KillSwitchRequest(BaseModel):
@@ -58,6 +62,13 @@ class OrderRecord(BaseModel):
     mode: str
     status: str
     timestamp: str
+    type: str = "Market"
+    limitPrice: float | None = None
+    tif: str | None = None
+    filledSize: float = 0.0
+    expiresAt: str | None = None
+    exchangeOrderId: str | None = None
+    updatedAt: str | None = None
     meta: dict[str, Any] | None = None
 
 

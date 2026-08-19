@@ -81,6 +81,7 @@ class ReconciliationService:
         try:
             state = self.client.get_clearinghouse_state(wallet.address, force=True)
             exchange = _exchange_positions(state)
+            exchange_orders = self.client.get_open_orders(wallet.address, force=True)
             local: dict[str, dict[str, Any]] = {}
             for position in self.store.list_open_positions(wallet_id):
                 if position.get("mode", "paper") != "live":
@@ -114,6 +115,12 @@ class ReconciliationService:
                     else 0.0
                 )
             divergences = self._compare(local, exchange)
+            divergences.extend(
+                self._compare_orders(
+                    self.store.list_pending_orders(wallet_id, mode="live"),
+                    exchange_orders,
+                )
+            )
             result["divergences"] = divergences
             result["status"] = "diverged" if divergences else "ok"
             self._alert_on_change(wallet_id, divergences)
@@ -198,6 +205,56 @@ class ReconciliationService:
                     "severity": "error",
                     "symbol": symbol,
                     "message": f"Exchange holds {symbol} without a local live position.",
+                }
+            )
+        return divergences
+
+    @staticmethod
+    def _compare_orders(
+        local_orders: list[dict[str, Any]],
+        exchange_orders: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        local_by_oid = {
+            str(order.get("exchangeOrderId")): order
+            for order in local_orders
+            if order.get("exchangeOrderId")
+        }
+        exchange_by_oid = {
+            str(order.get("oid") or order.get("orderId")): order
+            for order in exchange_orders
+            if order.get("oid") is not None or order.get("orderId") is not None
+        }
+        divergences: list[dict[str, Any]] = []
+        for oid, order in local_by_oid.items():
+            if oid in exchange_by_oid:
+                continue
+            divergences.append(
+                {
+                    "type": "local_order_missing_on_exchange",
+                    "severity": "error",
+                    "symbol": order["symbol"],
+                    "localOrderId": order["id"],
+                    "exchangeOrderId": oid,
+                    "message": (
+                        f"Local live order {order['id']} ({order['symbol']}) is "
+                        "missing from exchange resting orders."
+                    ),
+                }
+            )
+        for oid, order in exchange_by_oid.items():
+            if oid in local_by_oid:
+                continue
+            symbol = str(order.get("coin") or order.get("symbol") or "").upper()
+            divergences.append(
+                {
+                    "type": "untracked_exchange_order",
+                    "severity": "error",
+                    "symbol": symbol,
+                    "exchangeOrderId": oid,
+                    "message": (
+                        f"Exchange has resting order {oid} for {symbol} without "
+                        "a local order record."
+                    ),
                 }
             )
         return divergences
