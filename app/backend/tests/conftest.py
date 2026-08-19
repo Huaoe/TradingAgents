@@ -95,6 +95,7 @@ class MockHyperliquidClient:
             "assetPositions": [],
         }
         self.fills: list[dict[str, Any]] = []
+        self.open_orders: list[dict[str, Any]] = []
         self.user_funding: list[dict[str, Any]] = []
         self.user_fees: dict[str, Any] = {
             "userCrossRate": "0.00045",
@@ -180,6 +181,14 @@ class MockHyperliquidClient:
         force: bool = False,
     ) -> list[dict[str, Any]]:
         return self.user_funding
+
+    def get_open_orders(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.open_orders
 
 
 @pytest.fixture(autouse=True)

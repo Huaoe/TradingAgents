@@ -15,11 +15,22 @@ from typing import Any
 
 import pandas as pd
 
+from backend.models.strategy import RiskConfig
 from backend.services.hyperliquid_client import HyperliquidClient
 from backend.services.llm_cost import estimate_cost
 from backend.services.llm_tracker import LlmUsageTracker
 from backend.services.llm_usage_store import LlmUsageStore
 from backend.services.template_signals import prepare_candles_features, signal_for_bar
+
+_GUARDRAIL_FIELDS = frozenset(
+    {
+        "maxTotalExposure",
+        "maxPositionSize",
+        "maxOpenPositions",
+        "dailyLossLimit",
+        "maxLeverage",
+    }
+)
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> float:
@@ -83,6 +94,14 @@ def _build_signal(
     raw_cfg = strategy or {}
     risk_cfg = raw_cfg.get("riskConfig") or {}
     cfg = {**raw_cfg, **risk_cfg}
+    effective_risk_config = RiskConfig.model_validate(cfg).model_dump()
+    effective_risk_config.update(
+        {
+            key: cfg[key]
+            for key in _GUARDRAIL_FIELDS
+            if key in cfg
+        }
+    )
     long_funding_threshold = cfg.get("longFundingThreshold", -0.000005)
     short_funding_threshold = cfg.get("shortFundingThreshold", 0.000012)
     leverage = min(int(cfg.get("leverage", 3)), market.get("maxLeverage", 3))
@@ -254,6 +273,9 @@ def _build_signal(
             "candleFeatures": features,
             "funding": funding,
             "openInterest": oi,
+            "riskConfig": effective_risk_config,
+            "strategyTemplate": template,
+            "strategyIdentity": (strategy or {}).get("id") or (strategy or {}).get("name"),
         },
     }
 

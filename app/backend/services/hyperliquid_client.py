@@ -340,6 +340,22 @@ class HyperliquidClient:
         self._user_state_cache_expiry[key] = now + self._user_state_ttl_seconds
         return funding
 
+    def get_open_orders(
+        self,
+        address: str,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return the wallet's resting exchange orders with a short cache."""
+        key = f"open-orders:{address.lower()}"
+        now = time.monotonic()
+        if not force and self._user_state_cache_expiry.get(key, 0.0) > now:
+            return self._user_state_cache[key]["orders"]
+        orders = [dict(order) for order in self.info.open_orders(address)]
+        self._user_state_cache[key] = {"orders": orders}
+        self._user_state_cache_expiry[key] = now + self._user_state_ttl_seconds
+        return orders
+
     def estimate_slippage(self, symbol: str, notional: float) -> float:
         if notional <= 0:
             return 0.0

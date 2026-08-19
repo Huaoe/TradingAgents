@@ -29,7 +29,12 @@ import backend.services.strategy_store as strategy_store_module
 import backend.services.wallet_store as wallet_store
 from backend.models.alert import AlertReadRequest
 from backend.models.backtest import BacktestRequest, BacktestResult
-from backend.models.execution import ClosePositionRequest, ExecuteRequest
+from backend.models.execution import (
+    CancelOrderRequest,
+    ClosePositionRequest,
+    ExecuteRequest,
+    KillSwitchRequest,
+)
 from backend.models.portfolio import LiveModeRequest, PortfolioSummary
 from backend.models.reconciliation import ReconcileRequest, ReconciliationResult
 from backend.models.signal import SignalCreate
@@ -317,7 +322,7 @@ async def analyze(payload: AnalyzeRequest) -> dict[str, Any]:
             store = StrategyStore()
             stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
             if stored:
-                strategy = {**stored.riskConfig.model_dump(), **strategy}
+                strategy = {**stored.model_dump(), **strategy}
             else:
                 raise HTTPException(
                     status_code=404, detail=f"Strategy {payload.strategyId} not found"
@@ -341,7 +346,7 @@ async def create_signal(payload: SignalCreate) -> dict[str, Any]:
             store = StrategyStore()
             stored = await asyncio.to_thread(store.get_strategy, payload.strategyId)
             if stored:
-                strategy = {**stored.riskConfig.model_dump(), **strategy}
+                strategy = {**stored.model_dump(), **strategy}
             else:
                 raise HTTPException(
                     status_code=404, detail=f"Strategy {payload.strategyId} not found"
@@ -704,6 +709,53 @@ async def list_orders(wallet_id: str | None = None) -> list[dict[str, Any]]:
         return await asyncio.to_thread(engine.list_orders, wallet_id)
     except HTTPException:
         raise
+    except Exception as exc:
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@app.get("/api/exchange/orders")
+async def list_exchange_orders(wallet_id: str) -> list[dict[str, Any]]:
+    try:
+        engine = ExecutionEngine()
+        return await asyncio.to_thread(engine.list_exchange_orders, wallet_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@app.post("/api/exchange/orders/cancel")
+async def cancel_exchange_order(payload: CancelOrderRequest) -> dict[str, Any]:
+    try:
+        engine = ExecutionEngine()
+        return await asyncio.to_thread(
+            engine.cancel_exchange_order,
+            payload.walletId,
+            payload.symbol,
+            payload.orderId,
+            payload.masterPassword,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+
+@app.post("/api/kill-switch")
+async def kill_switch(payload: KillSwitchRequest) -> dict[str, Any]:
+    try:
+        engine = ExecutionEngine()
+        return await asyncio.to_thread(
+            engine.kill_switch,
+            payload.walletId,
+            payload.mode,
+            payload.masterPassword,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unexpected error: %s", exc)
         raise HTTPException(status_code=500, detail="Internal server error") from exc

@@ -51,6 +51,15 @@ export interface Position {
   status: string;
   mode: 'paper' | 'live';
   pnlSource?: 'exchange' | 'mark_price';
+  stopPrice: number | null;
+  takeProfitPrice: number | null;
+  trailingStopPct: number | null;
+  trailingWatermark: number | null;
+  exitReason?: string;
+  protectiveStatus?: string;
+  exchangeStopOrderId?: string;
+  exchangeTakeProfitOrderId?: string;
+  trailingUnsupported?: boolean;
   openedAt: string;
   closedAt: string | null;
 }
@@ -65,6 +74,39 @@ export interface Order {
   status: 'filled' | 'open' | 'cancelled';
   mode?: 'paper' | 'live';
   timestamp: string;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface ExchangeOrder {
+  oid?: number | string;
+  orderId?: number | string;
+  coin?: string;
+  symbol?: string;
+  side?: string;
+  sz?: number | string;
+  size?: number | string;
+  limitPx?: number | string;
+  price?: number | string;
+  orderType?: unknown;
+  [key: string]: unknown;
+}
+
+export interface KillSwitchOutcome {
+  status: string;
+  positionId?: string;
+  orderId?: string;
+  symbol?: string;
+  error?: string;
+  result?: unknown;
+  position?: Position;
+}
+
+export interface KillSwitchResult {
+  walletId: string;
+  mode: 'paper' | 'live';
+  orders: KillSwitchOutcome[];
+  positions: KillSwitchOutcome[];
+  liveEnabled: boolean;
 }
 
 export interface Account {

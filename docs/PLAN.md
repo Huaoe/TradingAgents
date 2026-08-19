@@ -30,15 +30,16 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Sprint 10 — Stabilization & Launch Prep | — | Done (merged in PR #11) |
 | Sprint 11 — Phase 2 Hardening | Epics 9–14 | Done (merged in PR #12; Epic 14 partial — `/api/health` does not yet probe DB/Hyperliquid and frontend component tests are not added) |
 | Sprint 12 — Execution Realism & Strategy Research | Epics 15–16 | Done (merged in PR #14, #15, #16, #17) |
-| Sprint 13 — Security Remediation | Epic 17 | **Not started — blocks live mainnet trading** |
-| Sprint 14 — Live-Trading Readiness | Epic 18 | Not started |
+| Sprint 13 — Security Remediation | Epic 17 | Deferred by the owner — the app runs on a single local machine, so exposure is judged acceptable. Still blocks any hosted or shared deployment. |
+| Sprint 14 — Live-Trading Readiness | Epic 18 | Done except the testnet soak (merged in PR #19; measured live fills/fees/funding, paper/live separation, read-only reconciliation, real health probes) |
 | Sprint 15 — Research Depth & Frontend Debt | Epics 19–20 | Not started |
+| Sprint 16 — Execution Parity & Controls | Epic 21 | In progress |
 
 ---
 
 ## Current State (2026-08-19)
 
-`main` is at `a5a5f66`. 69 backend tests pass; `ruff check`, `npm run lint`, `tsc --noEmit` and `npm run build` are clean.
+`main` is at `696bb9f`. 85 backend tests pass; `ruff check`, `npm run lint`, `tsc --noEmit` and `npm run build` are clean.
 
 **What works end to end:** market scanner, strategy library, backtest lab, multi-wallet storage, signal generation through `TradingAgentsGraph`, paper execution, portfolio/positions, alerts, and the Strategy Finder.
 
@@ -49,7 +50,11 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 - The Strategy Finder does anchored walk-forward selection over a parameter grid and reports a Deflated Sharpe Ratio, an in-sample-vs-out-of-sample rank correlation, and per-regime breakdowns.
 - **The honest read of the current results:** on BTC 1h over the last 60 days, walk-forward selection compounds to **+0.16%** against **+7.06%** buy-and-hold over the same test windows, and the winner's DSR is **0.29 across 128 trials** — i.e. not distinguishable from luck. No template in the library currently has demonstrated out-of-sample edge on this asset and period. Treat the library as a set of hypotheses to be tested, not a set of strategies to be run.
 
-**Known open risks (details in Epics 17–20):** the SPA catch-all in `app/backend/main.py` serves arbitrary files, `GET /api/wallets` returns `encryptedKey`, seven runtime `.db` files (including `wallets.db`) are tracked in git, and the API has no authentication — all of which became materially more dangerous when the default Hyperliquid network moved to mainnet in PR #16.
+**What Sprint 14 changed (PR #19):** live PnL, fees and funding are read back from `userFills` and the funding history instead of being assumed from a fee constant; paper and live balances are separated so a live fill no longer moves the simulated balance; a read-only reconciler compares local live positions against `clearinghouseState` and reports divergences instead of silently "fixing" them; `/api/health` probes every SQLite store and the Info API. Not yet true: none of this has been exercised against a real live order, and the net-PnL formula assumes Hyperliquid's `closedPnl` is gross of fees (recorded as `netPnlBasis` in the order meta) — the first real live close must be checked against the Hyperliquid UI.
+
+**The parity gap Sprint 16 addresses:** `stopLossPct`, `takeProfitPct` and `trailingStopPct` were honoured only by the backtest engine and the Strategy Finder. Nothing in the paper or live execution path placed or monitored them, so every backtest number depended on trade management that real trading never applied. In the same area, the strategy's `riskConfig` never reached execution (it was not written into the signal's `meta`), so risk guardrails ran on defaults, and there was no kill switch and no way to cancel a resting exchange order.
+
+**Known open risks:** the deferred security findings (details in Epic 17) — the SPA catch-all in `app/backend/main.py` serves arbitrary files, `GET /api/wallets` returns `encryptedKey`, seven runtime `.db` files (including `wallets.db`) are tracked in git, and the API has no authentication. These are survivable only because the app runs on localhost with the port unpublished; they are blocking for any hosted, shared or port-exposed run, and the key in the committed `wallets.db` should be treated as public. Beyond security: execution is market-order-only (so the maker-cost results that make the funding templates look viable are not reachable live), and there is no scheduler, so signals and executions are manual — the app is a trading console, not yet an autonomous agent.
 
 ---
 
@@ -57,10 +62,12 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 | # | Work | Why now |
 |---|---|---|
-| 1 | Epic 17 — Security remediation | The app defaults to mainnet and has an unauthenticated arbitrary-file-read that exposes `wallets.db`. This must land before any real-money run. |
-| 2 | Epic 18 — Live-trading readiness | Live accounting, reconciliation and health probes are incomplete, so a live run currently cannot be trusted to report what it actually did. |
+| 1 | Epic 21 — Execution parity & controls | Protective exits existed only in the simulator, so live and paper trading did not implement the strategies that were backtested. Also adds the missing kill switch and order cancel. In progress. |
+| 2 | Epic 22 — Limit orders & scheduling | Market-only execution makes the ~3 bps maker results unreachable, and an unused `schedule`/`executionMode` means nothing trades unattended. Live automation additionally needs a session key-unlock design, since signing requires the master password. |
 | 3 | Epic 19 — Research depth | The library has no demonstrated edge yet; the Strategy Finder needs persisted runs, purged cross-validation and cross-asset sweeps to search for one honestly. |
-| 4 | Epic 20 — Frontend & observability debt | Two chart libraries ship in the bundle, `/api/health` is still a stub, and there are no frontend component tests. |
+| 4 | Epic 18 leftovers | One controlled testnet or small-size live round trip to verify fill shape, partial fills, rejected orders, the `closedPnl` fee assumption and the funding sign. Needs a funded wallet and the master password. |
+| 5 | Epic 20 — Frontend & observability debt | Two chart libraries ship in the bundle and there are no frontend component tests. |
+| — | Epic 17 — Security remediation | Deferred by the owner for local-only use. Promote to #1 the moment the app is exposed beyond localhost. |
 
 ---
 
@@ -339,7 +346,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
-### Sprint 13 — Security Remediation *(Next)*
+### Sprint 13 — Security Remediation *(Deferred — local-only use)*
 **Goal:** Make the app safe to run against a mainnet wallet.
 
 **Epic:** Epic 17
@@ -355,7 +362,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
-### Sprint 14 — Live-Trading Readiness
+### Sprint 14 — Live-Trading Readiness *(Done except task 4)*
 **Goal:** Make a live run's reported state match the exchange's actual state.
 
 **Epic:** Epic 18
@@ -387,6 +394,22 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 
 ---
 
+### Sprint 16 — Execution Parity & Controls *(In progress)*
+**Goal:** Make live and paper trading implement the strategy that was backtested, and give the operator a way to stop everything.
+
+**Epic:** Epic 21
+
+**Tasks**
+1. Write the strategy's effective `riskConfig` into the signal's `meta` so protective levels and risk guardrails use what the user configured instead of defaults.
+2. Persist protective levels on the position from the actual fill price, and record the exit reason and both the trigger level and the realised fill on a protective close.
+3. Enforce protective exits in paper mode from the existing re-mark loop, mirroring the backtest's precedence (stop/trailing before take-profit, nearest candidate first).
+4. Enforce them in live mode exchange-side, with reduce-only trigger orders placed after the entry fill and cancelled on close, since the signing key is not held outside a request.
+5. Add resting-order listing, single-order cancel, and a kill switch that cancels, flattens and turns the wallet's live gate off.
+
+**Milestone:** A paper position with a stop closes itself at the stop with the slippage past it visible, a live position carries reduce-only stop/take-profit orders on the exchange, and one button flattens a wallet.
+
+---
+
 ## Execution Order Summary
 
 | Sprint | Epic Focus |
@@ -407,6 +430,7 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | 13 | Epic 17 — Security remediation (blocks mainnet) |
 | 14 | Epic 18 — Live-trading readiness and reconciliation |
 | 15 | Epics 19–20 — Research depth, chart consolidation, frontend tests |
+| 16 | Epic 21 — Protective-exit enforcement, kill switch, order cancel |
 
 ---
 
@@ -420,7 +444,9 @@ This plan orders the [Epics](./EPICS.md) and [User Stories](./USER_STORIES.md) i
 | Encrypted secret loss | Document key backup; never store plaintext; test recovery flow. |
 | Scope creep | Stick to one epic per sprint; defer NFT/Polymarket exchange integration to V2. |
 | Overfitting a "winner" | Rank on out-of-sample only, report the Deflated Sharpe Ratio for the number of trials, and refuse to promote a candidate whose DSR is not significant. |
-| Mainnet default + open API | Treat Epic 17 as a prerequisite for any live run; keep `LIVE_TRADING=false` and the per-wallet gate off until it lands. |
+| Mainnet default + open API | Deferred while the app is localhost-only with the port unpublished; treat Epic 17 as a prerequisite the moment it is exposed, and keep `LIVE_TRADING=false` and the per-wallet gate off until then. |
+| Backtest assumes trade management the exchange will not do | Enforce protective exits in both execution paths (Epic 21); where the exchange cannot enforce a leg — Hyperliquid has no native trailing stop — say so on the position rather than assuming the backtest holds. |
+| Live automation needs a signing key at rest | Live orders require the master password, so unattended live trading is out of scope until a deliberate session-unlock design lands (Epic 22). Paper automation carries no such risk. |
 
 ---
 

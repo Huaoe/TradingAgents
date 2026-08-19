@@ -286,10 +286,12 @@ Epics 15–16 were delivered in Sprint 12. Epics 17–20 are the current backlog
 |---|---|
 | Epic 15 — Hyperliquid-Accurate Execution Costs | Done (PR #14, #15, #16) |
 | Epic 16 — Strategy Search & Selection Discipline | Done (PR #17) |
-| Epic 17 — Security Remediation | **Not started — prerequisite for any live mainnet run** |
-| Epic 18 — Live-Trading Readiness | Not started |
+| Epic 17 — Security Remediation | Deferred by the owner for local-only use — still a prerequisite for any exposed or hosted run |
+| Epic 18 — Live-Trading Readiness | Done except the testnet soak (PR #19) |
 | Epic 19 — Research Depth | Not started |
 | Epic 20 — Frontend & Observability Debt | Not started |
+| Epic 21 — Execution Parity & Controls | In progress |
+| Epic 22 — Limit Orders & Scheduling | Not started |
 
 ## Epic 15: Hyperliquid-Accurate Execution Costs *(Done)*
 
@@ -317,9 +319,9 @@ Search parameter space without fooling ourselves that the winner will keep winni
 
 **Finding to carry forward:** on BTC 1h over 60 days, selection returned +0.16% against +7.06% buy-and-hold, with a DSR of 0.29 across 128 trials. The tool is working; the library has no demonstrated edge on this asset and period.
 
-## Epic 17: Security Remediation
+## Epic 17: Security Remediation *(Deferred by the owner — local-only use)*
 
-Close the findings from the project review. These were survivable while the app was testnet-only and localhost-only; PR #16 made mainnet the default, so they are not survivable now.
+Close the findings from the project review. The owner has judged these acceptable while the app runs on a single local machine with the port unpublished. They become blocking again the moment it is hosted, shared, or published beyond loopback — and the key in the committed `wallets.db` should be treated as public regardless.
 
 **Scope**
 - Resolve SPA catch-all paths and reject anything outside `FRONTEND_DIST`. Today `GET /..%2f..%2fbackend%2fdata%2fwallets.db` returns the wallet database to an unauthenticated caller.
@@ -333,9 +335,13 @@ Close the findings from the project review. These were survivable while the app 
 - `git ls-files` lists no `.db` file.
 - An unauthenticated request to an order-placing endpoint is rejected.
 
-## Epic 18: Live-Trading Readiness
+## Epic 18: Live-Trading Readiness *(Done except the testnet exercise — PR #19)*
 
 Make a live run's reported state match the exchange's actual state.
+
+**Delivered:** live fill price, fees and funding are read back from `userFills` and the funding history and recorded with an explicit cost source (`exchange_fills` vs `estimated`); paper and live balances and positions are separated, with live summaries read from `clearinghouseState`; a read-only reconciler compares local live positions against the exchange every 60s, classifies divergences and alerts without mutating local state; `/api/health` probes every SQLite store and the Info API and reports a degraded status; `yfinance` is declared.
+
+**Still open:** nothing has been exercised against a real live order, so partial fills, rejected orders and the kill-switch path are mocked rather than proven, and the realised-PnL formula assumes `closedPnl` is gross of fees (recorded as `netPnlBasis` in the order meta) — the first real close must be reconciled against the Hyperliquid UI. Needs a funded wallet and the master password.
 
 **Scope**
 - Reconcile internal positions and fills against `clearinghouseState` and `userFills` on a timer; raise an alert on divergence rather than silently trusting local state.
@@ -374,3 +380,34 @@ Look for an edge that survives out of sample, and be willing to conclude there i
 **Definition of Done**
 - One chart library in `package.json`, no chunk-size warning in `npm run build`.
 - Frontend component tests run in CI.
+
+## Epic 21: Execution Parity & Controls *(In progress)*
+
+Make the execution paths implement the strategy that was backtested, and give the operator a stop button.
+
+The gap: `stopLossPct`, `takeProfitPct` and `trailingStopPct` are honoured only by the backtest engine and the Strategy Finder. Nothing in the paper or live path places or monitors them, so every backtest number rests on trade management that real trading never applies. Alongside that, the strategy's `riskConfig` never reaches execution because it is not written into the signal's `meta`, so risk guardrails run on defaults; and there is no kill switch and no way to cancel a resting exchange order, leaving Epic 7's flatten/cancel-all commitment unmet.
+
+**Scope**
+- Record the effective `riskConfig` on the signal so protective levels and guardrails use the configured values.
+- Persist protective levels on the position, derived from the actual fill price, with the exit reason and both the trigger level and the realised fill recorded on a protective close — the backtest assumes an exact fill at the trigger, and the slippage past it should be visible rather than assumed away.
+- Enforce protective exits in paper mode from the existing re-mark loop, mirroring the backtest's precedence.
+- Enforce them in live mode exchange-side with reduce-only trigger orders, since the signing key is not held outside a request. Hyperliquid has no native trailing stop, so that leg cannot be enforced live and must be flagged on the position instead of assumed.
+- Resting-order listing, single-order cancel, and a kill switch that cancels, flattens and turns the wallet's live gate off, reporting per-leg outcomes rather than stopping at the first failure.
+
+**Definition of Done**
+- A paper position whose stop level is breached closes itself, records `stop_loss` as the exit reason, and shows the fill separately from the trigger level.
+- A live position carries reduce-only stop and take-profit orders on the exchange, which are cancelled when it closes; a live position with a trailing stop says the leg is unenforced.
+- The kill switch flattens every open position for a wallet, cancels its resting orders, and leaves the wallet unable to open new ones.
+
+## Epic 22: Limit Orders & Scheduling
+
+The two remaining reasons the app is a console rather than an agent.
+
+**Scope**
+- Limit/maker execution with a resting-order lifecycle (placement, partial fill, expiry, cancel, reconciliation of unfilled orders). Today only `market_open` is ever called, so the ~3 bps maker round trip that the funding templates depend on is unreachable live and those backtest results cannot be acted on.
+- A scheduler that honours the existing but unused `schedule` and `executionMode` fields: generate signals per strategy on a cadence, execute automatically under `auto`, and support pause/stop per strategy (Epic 6's start/pause/stop commitment).
+- A deliberate design for unattended live signing, since live orders need the master password. Paper automation needs none, so it can land first.
+
+**Definition of Done**
+- A maker order can be placed, partially filled, and either completed or cancelled, with local state matching the exchange throughout.
+- A paper strategy runs unattended for 24 hours on its schedule and can be paused and stopped from the UI.

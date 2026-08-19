@@ -16,12 +16,14 @@ from backend.services.hyperliquid_config import (
     is_live_trading_enabled,
 )
 from backend.services.portfolio_engine import PortfolioEngine
+from backend.services.protective import evaluate_protective_exit, protective_levels
 from backend.services.signal_store import SignalStore
 from backend.services.wallet_store import WalletStore
 
 # Hyperliquid taker fee at base tier.
 TAKER_FEE = 0.00045
 PAPER_SLIPPAGE = 0.0005
+TRIGGER_SLIPPAGE = 0.01
 FILL_LOOKUP_ATTEMPTS = 3
 FILL_LOOKUP_DELAY_SECONDS = 0.2
 PNL_DIVERGENCE_TOLERANCE = 0.01
@@ -222,6 +224,7 @@ class ExecutionEngine:
         order_id, position_id = self.store.generate_ids()
         now = datetime.now(timezone.utc).isoformat()
 
+        exchange = None
         if mode == "paper":
             slippage_pct, slippage_source = self._paper_slippage(symbol, notional)
             fill_price = _paper_fill(symbol, side, notional, self.client, slippage_pct)
@@ -314,6 +317,7 @@ class ExecutionEngine:
             if live_market
             else fill_price
         )
+        protective = protective_levels(fill_price, side, risk_config)
         position = {
             "id": position_id,
             "orderId": order_id,
@@ -331,10 +335,27 @@ class ExecutionEngine:
             "liquidationPrice": liq,
             "margin": margin,
             "status": "open",
+            **protective,
+            "protectiveStatus": (
+                "pending"
+                if any(
+                    position_level is not None
+                    for position_level in (
+                        protective["stopPrice"],
+                        protective["takeProfitPrice"],
+                        protective["trailingStopPct"],
+                    )
+                )
+                else "disabled"
+            ),
+            "trailingUnsupported": mode == "live"
+            and float(risk_config.get("trailingStopPct") or 0.0) > 0,
             "openedAt": now,
             "closedAt": None,
         }
         self.store.create_position(position)
+        if mode == "live" and exchange is not None:
+            self._place_live_protection(position, exchange)
         self.alert_engine.position_opened(position, wallet_id)
         return {"order": order, "position": self._normalize_position_side(position)}
 
@@ -344,6 +365,11 @@ class ExecutionEngine:
         wallet_id: str,
         mode: Literal["paper", "live"] = "paper",
         master_password: str | None = None,
+        exit_reason: str = "signal",
+        theoretical_trigger_price: float | None = None,
+        _bypass_live_gate: bool = False,
+        _exchange: Any | None = None,
+        _cancel_protection: bool = True,
     ) -> dict[str, Any]:
         position = self.store.get_position(position_id)
         if not position:
@@ -355,7 +381,7 @@ class ExecutionEngine:
         if not wallet:
             raise ValueError(f"Wallet {wallet_id} not found")
 
-        if mode == "live":
+        if mode == "live" and not _bypass_live_gate:
             self._require_live_gates(wallet_id)
 
         symbol = position["symbol"]
@@ -368,6 +394,7 @@ class ExecutionEngine:
         if mode != position.get("mode", mode):
             raise ValueError("Requested execution mode does not match the position mode")
 
+        exchange = _exchange
         if mode == "paper":
             slippage_pct, _slippage_source = self._paper_slippage(symbol, position["notional"])
             exit_price = _paper_fill(
@@ -383,7 +410,9 @@ class ExecutionEngine:
             private_key = self.wallet_store.decrypt_private_key(wallet_id, master_password)
             if not private_key:
                 raise ValueError("Could not decrypt wallet private key")
-            exchange = _live_exchange(wallet, private_key)
+            exchange = exchange or _live_exchange(wallet, private_key)
+            if _cancel_protection:
+                self._cancel_live_protection(position, exchange)
             result = exchange.market_close(symbol, float(size_coin))
             exit_price = entry  # fallback
             if result.get("status") == "ok":
@@ -437,6 +466,10 @@ class ExecutionEngine:
         position["pnl"] = round(net_pnl, 4)
         position["pnlPct"] = round(pnl_pct, 4)
         position["status"] = "closed"
+        position["exitReason"] = exit_reason
+        position["protectiveStatus"] = "triggered" if exit_reason != "signal" else "closed"
+        position["exchangeStopOrderId"] = None
+        position["exchangeTakeProfitOrderId"] = None
         position["closedAt"] = now
         self.store.update_position(position)
 
@@ -447,6 +480,10 @@ class ExecutionEngine:
             order["meta"]["netPnl"] = net_pnl
             order["meta"]["internalNetPnl"] = gross - fees
             order["meta"]["costSource"] = cost_source
+            order["meta"]["exitReason"] = exit_reason
+            if theoretical_trigger_price is not None:
+                order["meta"]["protectiveTriggerPrice"] = theoretical_trigger_price
+                order["meta"]["protectiveFillPrice"] = exit_price
             if mode == "live":
                 order["meta"]["closeFills"] = close_fills
                 order["meta"]["actualFee"] = fees
@@ -472,6 +509,258 @@ class ExecutionEngine:
         self.alert_engine.journal_closed_trade(position, order, net_pnl, gross, fees, wallet_id)
 
         return {"position": self._normalize_position_side(position), "netPnl": round(net_pnl, 4)}
+
+    def _place_live_protection(self, position: dict[str, Any], exchange: Any) -> None:
+        """Place reduce-only market triggers after a live entry fill."""
+        close_is_buy = position["side"] == "Sell"
+        placed: dict[str, str | None] = {
+            "exchangeStopOrderId": None,
+            "exchangeTakeProfitOrderId": None,
+        }
+        try:
+            for field, price, tpsl in (
+                ("exchangeStopOrderId", position.get("stopPrice"), "sl"),
+                ("exchangeTakeProfitOrderId", position.get("takeProfitPrice"), "tp"),
+            ):
+                if price is None:
+                    continue
+                limit_price = (
+                    float(price) * (1 + TRIGGER_SLIPPAGE)
+                    if close_is_buy
+                    else float(price) * (1 - TRIGGER_SLIPPAGE)
+                )
+                result = exchange.order(
+                    position["symbol"],
+                    close_is_buy,
+                    float(position["size"]),
+                    limit_price,
+                    {
+                        "trigger": {
+                            "triggerPx": float(price),
+                            "isMarket": True,
+                            "tpsl": tpsl,
+                        }
+                    },
+                    reduce_only=True,
+                )
+                order_id = _exchange_order_id(result)
+                if order_id is None:
+                    raise ValueError(f"Exchange did not return a trigger order id for {tpsl}")
+                placed[field] = order_id
+            position.update(placed)
+            position["protectiveStatus"] = "armed"
+            self.store.update_position(position)
+            if position.get("trailingUnsupported"):
+                self.alert_engine.protective_unsupported(
+                    position,
+                    position["walletId"],
+                )
+        except Exception as exc:  # noqa: BLE001
+            position.update(placed)
+            position["protectiveStatus"] = "unprotected"
+            self.store.update_position(position)
+            self.alert_engine.protective_unprotected(
+                f"Could not place live protective triggers: {exc}",
+                position["walletId"],
+                position["id"],
+            )
+
+    def _cancel_live_protection(self, position: dict[str, Any], exchange: Any) -> None:
+        """Best-effort cancellation of resting protective triggers."""
+        for order_id in (
+            position.get("exchangeStopOrderId"),
+            position.get("exchangeTakeProfitOrderId"),
+        ):
+            if not order_id:
+                continue
+            try:
+                exchange.cancel(position["symbol"], int(order_id))
+            except Exception as exc:  # noqa: BLE001
+                self.alert_engine.protective_unprotected(
+                    f"Could not cancel protective trigger {order_id}: {exc}",
+                    position["walletId"],
+                    position["id"],
+                )
+
+    def _monitor_paper_protection(self, position: dict[str, Any]) -> None:
+        if position.get("protectiveStatus") == "disabled":
+            return
+        if position.get("protectiveStatus") == "pending":
+            position["protectiveStatus"] = "armed"
+            self.store.update_position(position)
+            return
+        if position.get("protectiveStatus") != "armed":
+            return
+        evaluation = evaluate_protective_exit(position, position["markPrice"])
+        position["trailingWatermark"] = evaluation["watermark"]
+        if evaluation["reason"] is None:
+            self.store.update_position(position)
+            return
+        position["protectiveStatus"] = "triggered"
+        self.store.update_position(position)
+        self.alert_engine.protective_triggered(
+            position,
+            evaluation["reason"],
+            float(evaluation["triggerPrice"]),
+            position["walletId"],
+        )
+        self.close_position(
+            position["id"],
+            position["walletId"],
+            mode="paper",
+            exit_reason=evaluation["reason"],
+            theoretical_trigger_price=evaluation["triggerPrice"],
+        )
+
+    def _monitor_live_protection(self, position: dict[str, Any]) -> None:
+        expected = {
+            str(order_id)
+            for order_id in (
+                position.get("exchangeStopOrderId"),
+                position.get("exchangeTakeProfitOrderId"),
+            )
+            if order_id
+        }
+        if not expected or position.get("protectiveStatus") == "unprotected":
+            return
+        wallet = self.wallet_store.get_wallet(position["walletId"])
+        if not wallet:
+            return
+        try:
+            resting = self.client.get_open_orders(wallet.address)
+            present = {
+                str(order.get("oid") or order.get("orderId"))
+                for order in resting
+            }
+            missing = expected - present
+            if missing:
+                state = self.client.get_clearinghouse_state(wallet.address, force=True)
+                exchange_position = next(
+                    (
+                        asset.get("position", {})
+                        for asset in state.get("assetPositions", [])
+                        if str(asset.get("position", {}).get("coin", "")).upper()
+                        == position["symbol"].upper()
+                        and abs(float(asset.get("position", {}).get("szi") or 0.0)) > 1e-9
+                    ),
+                    None,
+                )
+                if exchange_position is None:
+                    logger.warning(
+                        "Live trigger %s vanished after exchange position %s closed; "
+                        "reconciliation will report any local divergence.",
+                        sorted(missing),
+                        position["symbol"],
+                    )
+                else:
+                    position["protectiveStatus"] = "unprotected"
+                    self.store.update_position(position)
+                    self.alert_engine.protective_unprotected(
+                        f"Expected live protective orders are missing: {sorted(missing)}",
+                        position["walletId"],
+                        position["id"],
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Live protective order check failed for %s: %s", position["symbol"], exc)
+
+    def list_exchange_orders(self, wallet_id: str) -> list[dict[str, Any]]:
+        wallet = self.wallet_store.get_wallet(wallet_id)
+        if not wallet:
+            raise ValueError(f"Wallet {wallet_id} not found")
+        return self.client.get_open_orders(wallet.address, force=True)
+
+    def cancel_exchange_order(
+        self,
+        wallet_id: str,
+        symbol: str,
+        order_id: str,
+        master_password: str,
+    ) -> dict[str, Any]:
+        self._require_live_gates(wallet_id)
+        wallet = self.wallet_store.get_wallet(wallet_id)
+        if not wallet:
+            raise ValueError(f"Wallet {wallet_id} not found")
+        private_key = self.wallet_store.decrypt_private_key(wallet_id, master_password)
+        if not private_key:
+            raise ValueError("Could not decrypt wallet private key")
+        exchange = _live_exchange(wallet, private_key)
+        result = exchange.cancel(symbol, int(order_id))
+        self.client.get_open_orders(wallet.address, force=True)
+        return {"walletId": wallet_id, "symbol": symbol, "orderId": order_id, "result": result}
+
+    def kill_switch(
+        self,
+        wallet_id: str,
+        mode: Literal["paper", "live"],
+        master_password: str | None = None,
+    ) -> dict[str, Any]:
+        wallet = self.wallet_store.get_wallet(wallet_id)
+        if not wallet:
+            raise ValueError(f"Wallet {wallet_id} not found")
+        self.portfolio_engine.portfolio_store.set_live_enabled(wallet_id, False)
+        exchange = None
+        order_results: list[dict[str, Any]] = []
+        if mode == "live":
+            if not master_password:
+                raise ValueError("masterPassword required for live kill switch")
+            private_key = self.wallet_store.decrypt_private_key(wallet_id, master_password)
+            if not private_key:
+                raise ValueError("Could not decrypt wallet private key")
+            exchange = _live_exchange(wallet, private_key)
+            try:
+                resting = self.client.get_open_orders(wallet.address, force=True)
+            except Exception as exc:  # noqa: BLE001
+                resting = []
+                order_results.append({"status": "error", "error": str(exc)})
+            for order in resting:
+                symbol = str(order.get("coin") or order.get("symbol") or "")
+                order_id = order.get("oid") or order.get("orderId")
+                outcome: dict[str, Any] = {
+                    "symbol": symbol,
+                    "orderId": str(order_id),
+                }
+                try:
+                    outcome["result"] = exchange.cancel(symbol, int(order_id))
+                    outcome["status"] = "cancelled"
+                except Exception as exc:  # noqa: BLE001
+                    outcome["status"] = "error"
+                    outcome["error"] = str(exc)
+                order_results.append(outcome)
+
+        position_results: list[dict[str, Any]] = []
+        positions = [
+            position
+            for position in self.store.list_open_positions(wallet_id)
+            if position.get("mode", "paper") == mode
+        ]
+        for position in positions:
+            outcome = {"positionId": position["id"]}
+            try:
+                outcome.update(
+                    self.close_position(
+                        position["id"],
+                        wallet_id,
+                        mode=mode,
+                        master_password=master_password,
+                        _bypass_live_gate=mode == "live",
+                        _exchange=exchange,
+                        _cancel_protection=mode != "live",
+                    )
+                )
+                outcome["status"] = "closed"
+            except Exception as exc:  # noqa: BLE001
+                outcome["status"] = "error"
+                outcome["error"] = str(exc)
+            position_results.append(outcome)
+
+        self.alert_engine.kill_switch(wallet_id, mode)
+        return {
+            "walletId": wallet_id,
+            "mode": mode,
+            "orders": order_results,
+            "positions": position_results,
+            "liveEnabled": False,
+        }
 
     def _require_live_gates(self, wallet_id: str) -> None:
         if not is_live_trading_enabled():
@@ -541,6 +830,10 @@ class ExecutionEngine:
             self.store.mark_position_price(
                 pos["id"], pos["markPrice"], pos["pnl"], pos["pnlPct"]
             )
+            if pos.get("mode", "paper") == "paper":
+                self._monitor_paper_protection(pos)
+            else:
+                self._monitor_live_protection(pos)
 
     def list_positions(self, wallet_id: str | None = None) -> list[dict[str, Any]]:
         positions = self.store.list_positions(wallet_id)

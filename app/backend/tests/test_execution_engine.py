@@ -8,6 +8,128 @@ import pytest
 
 import backend.services.execution_engine as execution_engine_module
 from backend.services.execution_engine import ExecutionEngine, _set_live_leverage
+from backend.services.protective import evaluate_protective_exit, protective_levels
+
+
+def test_protective_levels_match_backtest_decimal_percentages():
+    levels = protective_levels(100.0, "Buy", {
+        "stopLossPct": 0.02,
+        "takeProfitPct": 0.04,
+        "trailingStopPct": 0.01,
+    })
+
+    assert levels["stopPrice"] == pytest.approx(98.0)
+    assert levels["takeProfitPrice"] == pytest.approx(104.0)
+    assert levels["trailingWatermark"] == 100.0
+
+
+def test_protective_evaluation_precedence_watermark_and_opening_tick():
+    position = {
+        "side": "Buy",
+        "entryPrice": 100.0,
+        "stopPrice": 98.0,
+        "takeProfitPrice": 104.0,
+        "trailingStopPct": 0.01,
+        "trailingWatermark": 100.0,
+    }
+
+    assert evaluate_protective_exit(position, 98.0, opening_tick=True)["reason"] is None
+    advanced = evaluate_protective_exit(position, 103.0)
+    assert advanced["reason"] is None
+    assert advanced["watermark"] == pytest.approx(103.0)
+
+    triggered = evaluate_protective_exit(
+        {**position, "trailingWatermark": advanced["watermark"]},
+        101.9,
+    )
+    assert triggered["reason"] == "trailing_stop"
+    assert triggered["triggerPrice"] == pytest.approx(101.97)
+
+
+def test_short_watermark_only_advances_without_exit():
+    position = {
+        "side": "Sell",
+        "entryPrice": 100.0,
+        "stopPrice": 102.0,
+        "takeProfitPrice": 96.0,
+        "trailingStopPct": 0.01,
+        "trailingWatermark": 100.0,
+    }
+    result = evaluate_protective_exit(position, 97.0)
+    assert result["reason"] is None
+    assert result["watermark"] == pytest.approx(97.0)
+
+
+def test_paper_protective_close_records_trigger_and_releases_pnl(
+    isolated_stores, mock_hyperliquid_client
+):
+    position = {
+        "id": "pos-paper",
+        "orderId": "ord-paper",
+        "walletId": "wallet-paper",
+        "symbol": "BTC",
+        "side": "Buy",
+        "entryPrice": 100.0,
+        "markPrice": 98.0,
+        "size": 1.0,
+        "notional": 100.0,
+        "leverage": 2,
+        "pnl": 0.0,
+        "pnlPct": 0.0,
+        "liquidationPrice": None,
+        "margin": 50.0,
+        "status": "open",
+        "mode": "paper",
+        "protectiveStatus": "armed",
+        "stopPrice": 98.0,
+        "takeProfitPrice": None,
+        "trailingStopPct": None,
+        "trailingWatermark": 100.0,
+        "exitReason": None,
+        "openedAt": "2024-01-01T00:00:00+00:00",
+        "closedAt": None,
+    }
+    order = {"id": "ord-paper", "meta": {}, "status": "filled"}
+    released = []
+
+    class FakeStore:
+        def get_position(self, position_id):
+            return position
+
+        def get_order(self, order_id):
+            return order
+
+        def update_position(self, updated):
+            return updated
+
+        def update_order(self, updated):
+            return updated
+
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.portfolio_engine = SimpleNamespace(
+        release_pnl=lambda *args, **kwargs: released.append((args, kwargs)),
+    )
+    engine.alert_engine = SimpleNamespace(
+        position_closed=lambda *args: None,
+        journal_closed_trade=lambda *args: None,
+    )
+
+    result = engine.close_position(
+        "pos-paper",
+        "wallet-paper",
+        mode="paper",
+        exit_reason="stop_loss",
+        theoretical_trigger_price=98.0,
+    )
+
+    assert result["position"]["exitReason"] == "stop_loss"
+    assert order["meta"]["protectiveTriggerPrice"] == 98.0
+    assert order["meta"]["protectiveFillPrice"] == result["position"]["markPrice"]
+    assert released and released[0][0][1] == pytest.approx(result["netPnl"])
 
 
 def test_live_execution_requires_global_gate(monkeypatch, isolated_stores, mock_hyperliquid_client):
@@ -185,3 +307,202 @@ def test_live_unrealized_pnl_uses_exchange_position(mock_hyperliquid_client):
     assert position["markPrice"] == pytest.approx(105.0)
     assert position["pnl"] == pytest.approx(5.25)
     assert position["pnlSource"] == "exchange"
+
+
+def test_live_protection_places_reduce_only_trigger_orders(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    calls = []
+
+    class FakeExchange:
+        def order(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"resting": {"oid": 10 + len(calls)}}]}},
+            }
+
+    class FakeStore:
+        def update_position(self, position):
+            return position
+
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.alert_engine = SimpleNamespace(
+        protective_unsupported=lambda *args: None,
+        protective_unprotected=lambda *args: None,
+    )
+    position = {
+        "id": "pos-live",
+        "walletId": "wallet-live",
+        "symbol": "BTC",
+        "side": "Buy",
+        "size": 1.5,
+        "stopPrice": 98.0,
+        "takeProfitPrice": 104.0,
+        "trailingUnsupported": True,
+    }
+
+    engine._place_live_protection(position, FakeExchange())
+
+    assert position["protectiveStatus"] == "armed"
+    assert position["exchangeStopOrderId"] == "11"
+    assert position["exchangeTakeProfitOrderId"] == "12"
+    assert all(call[1]["reduce_only"] is True for call in calls)
+    assert [call[0][4]["trigger"]["tpsl"] for call in calls] == ["sl", "tp"]
+    assert [call[0][3] for call in calls] == pytest.approx([98.0 * 0.99, 104.0 * 0.99])
+
+
+def test_live_protection_uses_worse_closing_bound_for_short(
+    isolated_stores, mock_hyperliquid_client
+):
+    calls = []
+
+    class FakeExchange:
+        def order(self, *args, **kwargs):
+            calls.append((args, kwargs))
+            return {
+                "status": "ok",
+                "response": {"data": {"statuses": [{"resting": {"oid": 20 + len(calls)}}]}},
+            }
+
+    class FakeStore:
+        def update_position(self, position):
+            return position
+
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.alert_engine = SimpleNamespace(
+        protective_unsupported=lambda *args: None,
+        protective_unprotected=lambda *args: None,
+    )
+    position = {
+        "id": "pos-short",
+        "walletId": "wallet-short",
+        "symbol": "BTC",
+        "side": "Sell",
+        "size": 1.5,
+        "stopPrice": 102.0,
+        "takeProfitPrice": 96.0,
+        "trailingUnsupported": False,
+    }
+
+    engine._place_live_protection(position, FakeExchange())
+
+    assert all(call[0][1] is True for call in calls)
+    assert [call[0][3] for call in calls] == pytest.approx([102.0 * 1.01, 96.0 * 1.01])
+
+
+def test_live_protection_missing_trigger_distinguishes_closed_exchange_position(
+    isolated_stores, mock_hyperliquid_client
+):
+    class FakeStore:
+        def __init__(self):
+            self.updated = []
+
+        def update_position(self, position):
+            self.updated.append(position.copy())
+            return position
+
+    alerts = []
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.alert_engine = SimpleNamespace(
+        protective_unprotected=lambda *args: alerts.append(args),
+    )
+    position = {
+        "id": "pos-monitor",
+        "walletId": "wallet-monitor",
+        "symbol": "BTC",
+        "protectiveStatus": "armed",
+        "exchangeStopOrderId": "101",
+        "exchangeTakeProfitOrderId": "102",
+    }
+
+    engine._monitor_live_protection(position)
+
+    assert position["protectiveStatus"] == "armed"
+    assert alerts == []
+
+    mock_hyperliquid_client.clearinghouse["assetPositions"] = [
+        {"position": {"coin": "BTC", "szi": "1.0"}}
+    ]
+    engine._monitor_live_protection(position)
+
+    assert position["protectiveStatus"] == "unprotected"
+    assert alerts
+
+
+def test_live_protection_failure_marks_position_unprotected_without_flattening(
+    isolated_stores, mock_hyperliquid_client
+):
+    class FakeExchange:
+        def order(self, *args, **kwargs):
+            raise RuntimeError("exchange unavailable")
+
+    class FakeStore:
+        def update_position(self, position):
+            return position
+
+    alerts = []
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.alert_engine = SimpleNamespace(
+        protective_unsupported=lambda *args: None,
+        protective_unprotected=lambda *args: alerts.append(args),
+    )
+    position = {
+        "id": "pos-live",
+        "walletId": "wallet-live",
+        "symbol": "BTC",
+        "side": "Buy",
+        "size": 1.0,
+        "stopPrice": 98.0,
+        "takeProfitPrice": 104.0,
+        "trailingUnsupported": False,
+    }
+
+    engine._place_live_protection(position, FakeExchange())
+
+    assert position["protectiveStatus"] == "unprotected"
+    assert alerts
+
+
+def test_kill_switch_continues_after_one_position_failure(
+    monkeypatch, isolated_stores, mock_hyperliquid_client
+):
+    class FakeStore:
+        def list_open_positions(self, wallet_id):
+            return [
+                {"id": "pos-1", "mode": "paper", "status": "open"},
+                {"id": "pos-2", "mode": "paper", "status": "open"},
+            ]
+
+    engine = ExecutionEngine()
+    engine.store = FakeStore()
+    engine.wallet_store = SimpleNamespace(
+        get_wallet=lambda wallet_id: SimpleNamespace(address="0xabc"),
+    )
+    engine.portfolio_engine = SimpleNamespace(
+        portfolio_store=SimpleNamespace(
+            set_live_enabled=lambda wallet_id, enabled: calls.append("disable"),
+        ),
+    )
+    engine.alert_engine = SimpleNamespace(kill_switch=lambda *args: None)
+    calls = []
+
+    def close(position_id, *args, **kwargs):
+        calls.append(position_id)
+        if position_id == "pos-1":
+            raise RuntimeError("close failed")
+        return {"position": {"id": position_id}}
+
+    monkeypatch.setattr(engine, "close_position", close)
+    result = engine.kill_switch("wallet-1", "paper")
+
+    assert calls == ["disable", "pos-1", "pos-2"]
+    assert [item["status"] for item in result["positions"]] == ["error", "closed"]
+    assert result["liveEnabled"] is False

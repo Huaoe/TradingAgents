@@ -1,4 +1,4 @@
-import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob, ReconciliationResult } from '../types';
+import type { Market, Signal, Position, Order, Account, Alert, JournalEntry, Strategy, StrategyInput, ModelCatalog, BacktestInput, BacktestResult, Wallet, WalletInput, Health, WalletUpdateInput, PortfolioHistoryPoint, StrategySearchInput, StrategySearchJob, ReconciliationResult, ExchangeOrder, KillSwitchResult } from '../types';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -34,6 +34,37 @@ export async function fetchPositions(walletId?: string): Promise<Position[]> {
 export async function fetchOrders(walletId?: string): Promise<Order[]> {
   const qs = walletId ? `?wallet_id=${encodeURIComponent(walletId)}` : '';
   return api<Order[]>(`/api/orders${qs}`);
+}
+
+export async function fetchExchangeOrders(walletId: string): Promise<ExchangeOrder[]> {
+  return api<ExchangeOrder[]>(`/api/exchange/orders?wallet_id=${encodeURIComponent(walletId)}`);
+}
+
+export interface CancelExchangeOrderInput {
+  walletId: string;
+  symbol: string;
+  orderId: string;
+  masterPassword: string;
+}
+
+export async function cancelExchangeOrder(input: CancelExchangeOrderInput): Promise<Record<string, unknown>> {
+  return api<Record<string, unknown>>('/api/exchange/orders/cancel', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export interface KillSwitchInput {
+  walletId: string;
+  mode: 'paper' | 'live';
+  masterPassword?: string;
+}
+
+export async function activateKillSwitch(input: KillSwitchInput): Promise<KillSwitchResult> {
+  return api<KillSwitchResult>('/api/kill-switch', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
 
 export async function fetchReconciliation(walletId: string): Promise<ReconciliationResult | null> {
