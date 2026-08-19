@@ -395,6 +395,10 @@ def run_strategy_search(
             skipped_folds.append(
                 {
                     "fold": fold_number,
+                    "trainStart": splits[fold_number - 1][0].index[0].isoformat(),
+                    "trainEnd": splits[fold_number - 1][0].index[-1].isoformat(),
+                    "testStart": splits[fold_number - 1][1].index[0].isoformat(),
+                    "testEnd": splits[fold_number - 1][1].index[-1].isoformat(),
                     "reason": f"No candidate reached minTradesIS={min_trades_is}",
                 }
             )
@@ -414,6 +418,10 @@ def run_strategy_search(
         selected_folds.append(
             {
                 "fold": fold_number,
+                "trainStart": splits[fold_number - 1][0].index[0].isoformat(),
+                "trainEnd": splits[fold_number - 1][0].index[-1].isoformat(),
+                "testStart": splits[fold_number - 1][1].index[0].isoformat(),
+                "testEnd": splits[fold_number - 1][1].index[-1].isoformat(),
                 "candidateId": selected["candidateId"],
                 "template": selected["template"],
                 "overrides": selected["overrides"],
@@ -443,11 +451,24 @@ def run_strategy_search(
                 "candidateId": record["candidateId"],
                 "template": record["template"],
                 "overrides": record["overrides"],
+                "riskConfig": next(
+                    candidate["strategy"]["riskConfig"]
+                    for candidate in candidates
+                    if candidate["id"] == record["candidateId"]
+                ),
                 "meanInSampleSharpePerBar": float(pd.Series(valid_is).mean()) if valid_is else None,
                 "meanOutOfSampleSharpePerBar": float(pd.Series(valid_oos).mean()) if valid_oos else None,
                 "medianOutOfSampleSharpePerBar": float(pd.Series(valid_oos).median())
                 if valid_oos
                 else None,
+                "medianOutOfSampleSharpeAnnualised": (
+                    annualise_sharpe(
+                        float(pd.Series(valid_oos).median()),
+                        _annualization_factor(interval),
+                    )
+                    if valid_oos
+                    else None
+                ),
                 "meanInSampleSharpeAnnualised": (
                     annualise_sharpe(float(pd.Series(valid_is).mean()), _annualization_factor(interval))
                     if valid_is
@@ -575,6 +596,7 @@ def run_strategy_search(
             "candidateId": full_winner["id"],
             "template": full_winner["template"],
             "overrides": full_winner["overrides"],
+            "riskConfig": full_winner["strategy"]["riskConfig"],
             "returnPct": full_record["full"]["score"]["returnPct"],
             "trades": full_record["full"]["score"]["trades"],
             "perBarSharpe": full_record["full"]["score"]["perBarSharpe"],

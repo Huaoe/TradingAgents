@@ -153,6 +153,11 @@ def test_ineligible_high_sharpe_candidate_is_not_selected(monkeypatch):
         prepared_max_leverage=5,
     )
     assert all(not fold["candidateId"].endswith(":0") for fold in result["selection"]["selectedFolds"])
+    selected_fold = result["selection"]["selectedFolds"][0]
+    assert selected_fold["trainStart"] == frame.index[0].isoformat()
+    assert selected_fold["trainEnd"] == frame.index[11].isoformat()
+    assert selected_fold["testStart"] == frame.index[12].isoformat()
+    assert selected_fold["testEnd"] == frame.index[23].isoformat()
 
 
 def test_no_trade_fold_scores_zero_and_curves_are_not_retained(monkeypatch):
@@ -221,7 +226,14 @@ def test_fold_without_eligible_candidate_is_skipped(monkeypatch):
         prepared_max_leverage=5,
     )
     assert result["skippedFolds"] == [
-        {"fold": 1, "reason": "No candidate reached minTradesIS=5"}
+        {
+            "fold": 1,
+            "trainStart": frame.index[0].isoformat(),
+            "trainEnd": frame.index[11].isoformat(),
+            "testStart": frame.index[12].isoformat(),
+            "testEnd": frame.index[23].isoformat(),
+            "reason": "No candidate reached minTradesIS=5",
+        }
     ]
     assert result["selection"]["skippedFolds"] == result["skippedFolds"]
     assert len(result["selection"]["selectedFolds"]) == 1
