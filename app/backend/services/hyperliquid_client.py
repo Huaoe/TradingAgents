@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,14 @@ class HyperliquidClient:
     """Singleton wrapper around the Hyperliquid ``Info`` client."""
 
     _instance: HyperliquidClient | None = None
+    _universe_cache: dict[str, list[dict[str, Any]]] = {}
+    _universe_cache_expiry: dict[str, float] = {}
+    _market_cache: dict[str, dict[str, Any]] = {}
+    _market_cache_expiry: dict[str, float] = {}
+    _user_fee_cache: dict[str, dict[str, Any]] = {}
+    _user_fee_cache_expiry: dict[str, float] = {}
+    _cache_ttl_seconds = 10.0
+    _max_funding_pages = 1_000
 
     def __new__(cls) -> HyperliquidClient:
         if cls._instance is None:
@@ -20,77 +29,105 @@ class HyperliquidClient:
             cls._instance._info = Info(skip_ws=True)
         return cls._instance
 
+    @classmethod
+    def _cached_markets(
+        cls,
+        key: str,
+        loader,
+    ) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if cls._universe_cache_expiry.get(key, 0.0) > now:
+            return cls._universe_cache[key]
+        markets = loader()
+        cls._universe_cache[key] = markets
+        cls._universe_cache_expiry[key] = now + cls._cache_ttl_seconds
+        for market in markets:
+            market_key = market["symbol"].upper()
+            cls._market_cache[market_key] = market
+            cls._market_cache_expiry[market_key] = now + cls._cache_ttl_seconds
+        return markets
+
     @property
     def info(self) -> Info:
         return self._info
 
     def get_perp_markets(self) -> list[dict[str, Any]]:
-        meta, ctxs = self.info.meta_and_asset_ctxs()
-        markets: list[dict[str, Any]] = []
-        for asset, ctx in zip(meta["universe"], ctxs, strict=False):
-            coin = asset["name"]
-            mark = float(ctx.get("markPx") or 0)
-            mid = float(ctx.get("midPx") or 0)
-            prev = float(ctx.get("prevDayPx") or 0)
-            price = mid or mark
-            change = ((price - prev) / prev * 100) if price and prev else 0.0
-            markets.append(
-                {
-                    "symbol": coin,
-                    "name": f"{coin}-PERP",
-                    "type": "perp",
-                    "price": round(price, 8) if price else 0.0,
-                    "change24h": round(change, 2),
-                    "volume24h": float(ctx.get("dayNtlVlm") or 0),
-                    "funding": float(ctx.get("funding") or 0),
-                    "openInterest": float(ctx.get("openInterest") or 0),
-                    "markPrice": float(ctx.get("markPx") or 0),
-                    "oraclePrice": float(ctx.get("oraclePx") or 0),
-                    "maxLeverage": int(asset.get("maxLeverage") or 1),
-                }
-            )
-        return markets
+        def load() -> list[dict[str, Any]]:
+            meta, ctxs = self.info.meta_and_asset_ctxs()
+            markets: list[dict[str, Any]] = []
+            for asset, ctx in zip(meta["universe"], ctxs, strict=False):
+                coin = asset["name"]
+                mark = float(ctx.get("markPx") or 0)
+                mid = float(ctx.get("midPx") or 0)
+                prev = float(ctx.get("prevDayPx") or 0)
+                price = mid or mark
+                change = ((price - prev) / prev * 100) if price and prev else 0.0
+                markets.append(
+                    {
+                        "symbol": coin,
+                        "name": f"{coin}-PERP",
+                        "type": "perp",
+                        "price": round(price, 8) if price else 0.0,
+                        "change24h": round(change, 2),
+                        "volume24h": float(ctx.get("dayNtlVlm") or 0),
+                        "funding": float(ctx.get("funding") or 0),
+                        "openInterest": float(ctx.get("openInterest") or 0),
+                        "markPrice": float(ctx.get("markPx") or 0),
+                        "oraclePrice": float(ctx.get("oraclePx") or 0),
+                        "maxLeverage": int(asset.get("maxLeverage") or 1),
+                    }
+                )
+            return markets
+
+        return self._cached_markets("perp", load)
 
     def get_spot_markets(self) -> list[dict[str, Any]]:
-        spot_meta, spot_ctxs = self.info.spot_meta_and_asset_ctxs()
-        token_by_index = {t["index"]: t for t in spot_meta["tokens"]}
-        markets: list[dict[str, Any]] = []
-        for asset, ctx in zip(spot_meta["universe"], spot_ctxs, strict=False):
-            base_idx, quote_idx = asset["tokens"]
-            base = token_by_index[base_idx]["name"]
-            quote = token_by_index[quote_idx]["name"]
-            name = f"{base}/{quote}"
-            symbol = asset["name"] or name
-            mark = float(ctx.get("markPx") or 0)
-            mid = float(ctx.get("midPx") or 0)
-            prev = float(ctx.get("prevDayPx") or 0)
-            price = mid or mark
-            change = ((price - prev) / prev * 100) if price and prev else 0.0
-            markets.append(
-                {
-                    "symbol": symbol,
-                    "name": name,
-                    "type": "spot",
-                    "price": round(price, 8) if price else 0.0,
-                    "change24h": round(change, 2),
-                    "volume24h": float(ctx.get("dayNtlVlm") or 0),
-                    "funding": 0.0,
-                    "openInterest": 0.0,
-                    "markPrice": float(ctx.get("markPx") or 0),
-                    "oraclePrice": float(ctx.get("markPx") or 0),
-                    "maxLeverage": 1,
-                }
-            )
-        return markets
+        def load() -> list[dict[str, Any]]:
+            spot_meta, spot_ctxs = self.info.spot_meta_and_asset_ctxs()
+            token_by_index = {t["index"]: t for t in spot_meta["tokens"]}
+            markets: list[dict[str, Any]] = []
+            for asset, ctx in zip(spot_meta["universe"], spot_ctxs, strict=False):
+                base_idx, quote_idx = asset["tokens"]
+                base = token_by_index[base_idx]["name"]
+                quote = token_by_index[quote_idx]["name"]
+                name = f"{base}/{quote}"
+                symbol = asset["name"] or name
+                mark = float(ctx.get("markPx") or 0)
+                mid = float(ctx.get("midPx") or 0)
+                prev = float(ctx.get("prevDayPx") or 0)
+                price = mid or mark
+                change = ((price - prev) / prev * 100) if price and prev else 0.0
+                markets.append(
+                    {
+                        "symbol": symbol,
+                        "name": name,
+                        "type": "spot",
+                        "price": round(price, 8) if price else 0.0,
+                        "change24h": round(change, 2),
+                        "volume24h": float(ctx.get("dayNtlVlm") or 0),
+                        "funding": 0.0,
+                        "openInterest": 0.0,
+                        "markPrice": float(ctx.get("markPx") or 0),
+                        "oraclePrice": float(ctx.get("markPx") or 0),
+                        "maxLeverage": 1,
+                    }
+                )
+            return markets
+
+        return self._cached_markets("spot", load)
 
     def get_markets(self) -> list[dict[str, Any]]:
         return self.get_perp_markets() + self.get_spot_markets()
 
     def get_market(self, symbol: str) -> dict[str, Any] | None:
-        for market in self.get_markets():
-            if market["symbol"].upper() == symbol.upper():
-                return market
-        return None
+        key = symbol.upper()
+        if self._market_cache_expiry.get(key, 0.0) > time.monotonic():
+            return self._market_cache[key]
+        self.get_perp_markets()
+        if self._market_cache_expiry.get(key, 0.0) > time.monotonic():
+            return self._market_cache[key]
+        self.get_spot_markets()
+        return self._market_cache.get(key)
 
     def get_candles(
         self,
@@ -142,16 +179,33 @@ class HyperliquidClient:
             end_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         if start_ms is None:
             start_ms = end_ms - 30 * 24 * 60 * 60 * 1000
-        raw = self.info.funding_history(symbol, start_ms, end_ms)
-        return [
-            {
-                "time": int(row["time"]),
-                "coin": row["coin"],
-                "fundingRate": float(row["fundingRate"]),
-                "premium": float(row["premium"]),
-            }
-            for row in raw
-        ]
+        rows: list[dict[str, Any]] = []
+        cursor = start_ms
+        for _ in range(self._max_funding_pages):
+            if cursor > end_ms:
+                break
+            raw = self.info.funding_history(symbol, cursor, end_ms)
+            if not raw:
+                break
+            page = [
+                {
+                    "time": int(row["time"]),
+                    "coin": row["coin"],
+                    "fundingRate": float(row["fundingRate"]),
+                    "premium": float(row["premium"]),
+                }
+                for row in raw
+            ]
+            rows.extend(page)
+            last_time = max(row["time"] for row in page)
+            if last_time >= end_ms or last_time < cursor:
+                break
+            next_cursor = last_time + 1
+            if next_cursor <= cursor:
+                break
+            cursor = next_cursor
+        unique = {row["time"]: row for row in rows}
+        return [unique[key] for key in sorted(unique)]
 
     def get_orderbook(self, symbol: str, levels: int = 10) -> dict[str, Any]:
         raw = self.info.l2_snapshot(symbol)
@@ -180,6 +234,63 @@ class HyperliquidClient:
             "spreadPct": self._spread_pct(bids_top, asks_top),
             "imbalance": self._imbalance(bids_top, asks_top),
         }
+
+    def get_user_fees(self, address: str) -> dict[str, Any]:
+        key = address.lower()
+        now = time.monotonic()
+        if self._user_fee_cache_expiry.get(key, 0.0) > now:
+            return self._user_fee_cache[key]
+        raw = self.info.user_fees(address)
+        result = {
+            "address": address,
+            "userCrossRate": float(raw.get("userCrossRate", 0.00045)),
+            "userAddRate": float(raw.get("userAddRate", 0.00015)),
+            "userSpotCrossRate": float(raw.get("userSpotCrossRate", 0.00045)),
+            "userSpotAddRate": float(raw.get("userSpotAddRate", 0.00015)),
+            "makerFee": float(raw.get("userAddRate", 0.00015)),
+            "takerFee": float(raw.get("userCrossRate", 0.00045)),
+            "spotMakerFee": float(raw.get("userSpotAddRate", 0.00015)),
+            "spotTakerFee": float(raw.get("userSpotCrossRate", 0.00045)),
+            "activeReferralDiscount": raw.get("activeReferralDiscount"),
+            "activeStakingDiscount": raw.get("activeStakingDiscount"),
+            "feeSchedule": raw.get("feeSchedule"),
+        }
+        self._user_fee_cache[key] = result
+        self._user_fee_cache_expiry[key] = now + self._cache_ttl_seconds
+        return result
+
+    def estimate_slippage(self, symbol: str, notional: float) -> float:
+        if notional <= 0:
+            return 0.0
+        raw = self.info.l2_snapshot(symbol)
+        bids = raw["levels"][0]
+        asks = raw["levels"][1]
+        if not bids or not asks:
+            raise ValueError(f"Order book for {symbol} is empty")
+        best_bid = float(bids[0]["px"])
+        best_ask = float(asks[0]["px"])
+        mid = (best_bid + best_ask) / 2
+
+        def average_fill(levels: list[dict[str, Any]]) -> float:
+            remaining = float(notional)
+            filled_notional = 0.0
+            filled_coins = 0.0
+            for level in levels:
+                price = float(level["px"])
+                available_notional = price * float(level["sz"])
+                take_notional = min(remaining, available_notional)
+                filled_notional += take_notional
+                filled_coins += take_notional / price
+                remaining -= take_notional
+                if remaining <= 1e-9:
+                    break
+            if remaining > 1e-9 or filled_coins <= 0:
+                raise ValueError(f"Order book depth is insufficient for ${notional:,.2f}")
+            return filled_notional / filled_coins
+
+        buy_cost = (average_fill(asks) - mid) / mid
+        sell_cost = (mid - average_fill(bids)) / mid
+        return max(0.0, float((buy_cost + sell_cost) / 2))
 
     @staticmethod
     def _spread_pct(bids: list[dict], asks: list[dict]) -> float | None:

@@ -84,6 +84,15 @@ class MockHyperliquidClient:
             "imbalance": 0.5,
         }
         self.funding: list[dict[str, Any]] = []
+        self.user_fees: dict[str, Any] = {
+            "userCrossRate": "0.00045",
+            "userAddRate": "0.00015",
+            "userSpotCrossRate": "0.0004",
+            "userSpotAddRate": "0.0002",
+            "activeReferralDiscount": "0.0",
+            "activeStakingDiscount": "0.0",
+            "feeSchedule": {"tiers": []},
+        }
         self.candles: list[dict[str, Any]] = make_candles([100.0 + i for i in range(100)])
 
     def get_markets(self) -> list[dict[str, Any]]:
@@ -127,6 +136,12 @@ class MockHyperliquidClient:
 
     def get_orderbook(self, symbol: str, levels: int = 10) -> dict[str, Any]:
         return self.orderbook
+
+    def get_user_fees(self, address: str) -> dict[str, Any]:
+        return {"address": address, "makerFee": 0.00015, "takerFee": 0.00045}
+
+    def estimate_slippage(self, symbol: str, notional: float) -> float:
+        return 0.00005
 
 
 @pytest.fixture(autouse=True)

@@ -114,6 +114,9 @@ def _merge_funding(
     funding_history: list[dict[str, Any]],
 ) -> pd.DataFrame:
     df["fundingRate"] = 0.0
+    df["fundingEvents"] = [[] for _ in range(len(df))]
+    df["fundingMedian168"] = float("nan")
+    df["fundingStd168"] = float("nan")
     if not funding_history:
         return df
     ff = pd.DataFrame(funding_history)
@@ -124,11 +127,21 @@ def _merge_funding(
     if "fundingRate" not in ff.columns:
         return df
     ff = ff[["fundingRate"]].astype(float)
-    # Reindex to include all candle timestamps, forward-fill, then back-fill.
+    events = ff["fundingRate"].copy()
+    for timestamp, rate in events.items():
+        bar_index = int(df.index.searchsorted(timestamp, side="right") - 1)
+        if 0 <= bar_index < len(df):
+            df.iloc[bar_index, df.columns.get_loc("fundingEvents")].append(float(rate))
+    # Reindex to include all candle timestamps and forward-fill only. Leading
+    # gaps stay empty and are treated as zero funding by the caller.
     combined_index = df.index.union(ff.index)
     ff = ff.reindex(combined_index).sort_index()
-    ff["fundingRate"] = ff["fundingRate"].ffill().bfill()
+    ff["fundingRate"] = ff["fundingRate"].ffill()
     df["fundingRate"] = ff.reindex(df.index)["fundingRate"].fillna(0.0)
+    # A 168-bar trailing distribution is approximately seven days on 1h data.
+    rates = df["fundingRate"].astype(float)
+    df["fundingMedian168"] = rates.rolling(168, min_periods=168).median().shift(1)
+    df["fundingStd168"] = rates.rolling(168, min_periods=168).std(ddof=1).shift(1)
     return df
 
 
@@ -220,9 +233,12 @@ def run_backtest(
     end_at: str,
     strategy: dict[str, Any] | None = None,
     initial_balance: float = 10_000.0,
-    maker_fee: float = 0.0002,
+    maker_fee: float = 0.00015,
     taker_fee: float = 0.00045,
-    slippage_pct: float = 0.0005,
+    slippage_pct: float = 0.00005,
+    order_type: str = "taker",
+    fee_source: str = "generic_default",
+    slippage_source: str = "default",
 ) -> dict[str, Any]:
     """Run a bar-by-bar backtest and return a dict compatible with ``BacktestResult``."""
     strategy = _load_strategy(strategy or {})
@@ -252,6 +268,16 @@ def run_backtest(
     cfg = strategy.get("riskConfig") or {}
     leverage = max(1, int(_safe_float(cfg.get("leverage"), 3)))
     allocation = max(0.0, min(1.0, _safe_float(cfg.get("allocation"), 0.10)))
+    min_hold_bars = max(0, int(_safe_float(cfg.get("minHoldBars"), 0)))
+    cooldown_bars = max(0, int(_safe_float(cfg.get("cooldownBars"), 0)))
+    exit_hysteresis = cfg.get("exitHysteresis")
+    exit_hysteresis = (
+        max(0.0, min(100.0, _safe_float(exit_hysteresis))) if exit_hysteresis is not None else None
+    )
+    stop_loss_pct = max(0.0, _safe_float(cfg.get("stopLossPct"), 0.0))
+    take_profit_pct = max(0.0, _safe_float(cfg.get("takeProfitPct"), 0.0))
+    trailing_stop_pct = max(0.0, _safe_float(cfg.get("trailingStopPct"), 0.0))
+    order_type = order_type if order_type in {"maker", "taker"} else "taker"
 
     market = client.get_market(symbol) or {}
     max_leverage = int(market.get("maxLeverage") or 3)
@@ -281,8 +307,12 @@ def run_backtest(
     entry_notional = 0.0
     position_size_coin = 0.0
     cumulative_funding = 0.0
+    entry_bar_index = -1
+    last_exit_bar_index = -(10**9)
+    highest_price = 0.0
+    lowest_price = 0.0
 
-    fee_rate = taker_fee + slippage_pct
+    fee_rate = maker_fee if order_type == "maker" else taker_fee + slippage_pct
 
     def mark_equity(current_price: float, current_time: pd.Timestamp) -> None:
         nonlocal peak
@@ -298,7 +328,9 @@ def run_backtest(
             peak = total
         dd = (peak - total) / peak if peak > 0 else 0.0
         drawdown_curve.append({"time": current_time.isoformat(), "drawdown": round(dd * 100, 2)})
-        price_curve.append({"time": current_time.isoformat(), "close": round(float(current_price), 8)})
+        price_curve.append(
+            {"time": current_time.isoformat(), "close": round(float(current_price), 8)}
+        )
 
     def open_position(new_position: int, price: float, time: pd.Timestamp, confidence: int) -> None:
         nonlocal \
@@ -309,7 +341,10 @@ def run_backtest(
             entry_confidence, \
             entry_notional, \
             position_size_coin, \
-            cumulative_funding
+            cumulative_funding, \
+            entry_bar_index, \
+            highest_price, \
+            lowest_price
         position = new_position
         entry_price = float(price)
         entry_time = time
@@ -323,8 +358,11 @@ def run_backtest(
         cost = float(entry_notional * fee_rate)
         cash = float(cash - cost)
         cumulative_funding = 0.0
+        entry_bar_index = i
+        highest_price = entry_price
+        lowest_price = entry_price
 
-    def close_position(price: float, time: pd.Timestamp) -> None:
+    def close_position(price: float, time: pd.Timestamp, exit_reason: str = "signal") -> None:
         nonlocal \
             cash, \
             position, \
@@ -333,7 +371,11 @@ def run_backtest(
             entry_confidence, \
             entry_notional, \
             position_size_coin, \
-            cumulative_funding
+            cumulative_funding, \
+            last_exit_bar_index, \
+            entry_bar_index, \
+            highest_price, \
+            lowest_price
         if position == 0 or not entry_price:
             return
         close_price = float(price)
@@ -341,11 +383,13 @@ def run_backtest(
             gross_pnl = float(position_size_coin * (close_price - entry_price))
         else:
             gross_pnl = float(position_size_coin * (entry_price - close_price))
-        exit_cost = float(entry_notional * fee_rate)
-        net_pnl = float(gross_pnl - exit_cost - cumulative_funding)
+        exit_notional = float(position_size_coin * close_price)
+        entry_cost = float(entry_notional * fee_rate)
+        exit_cost = float(exit_notional * fee_rate)
+        net_pnl = float(gross_pnl - entry_cost - exit_cost - cumulative_funding)
         cash = float(cash + gross_pnl - exit_cost - cumulative_funding)
         side = "LONG" if position == 1 else "SHORT"
-        return_pct = float((gross_pnl / entry_notional * 100) if entry_notional else 0.0)
+        return_pct = float((net_pnl / entry_notional * 100) if entry_notional else 0.0)
         trades.append(
             {
                 "entryTime": entry_time.isoformat() if entry_time else None,
@@ -358,13 +402,15 @@ def run_backtest(
                 "notional": round(float(entry_notional), 2),
                 "leverage": leverage,
                 "grossPnl": round(gross_pnl, 2),
-                "fees": round(float(entry_notional * fee_rate * 2), 2),
+                "fees": round(float(entry_cost + exit_cost), 2),
                 "fundingCost": round(float(cumulative_funding), 2),
                 "netPnl": round(net_pnl, 2),
                 "returnPct": round(return_pct, 2),
                 "confidence": int(entry_confidence),
+                "exitReason": exit_reason,
             }
         )
+        last_exit_bar_index = i
         position = 0
         entry_price = 0.0
         entry_time = None
@@ -372,6 +418,9 @@ def run_backtest(
         entry_notional = 0.0
         position_size_coin = 0.0
         cumulative_funding = 0.0
+        entry_bar_index = -1
+        highest_price = 0.0
+        lowest_price = 0.0
 
     for i in range(len(df)):
         row = df.iloc[i]
@@ -381,21 +430,97 @@ def run_backtest(
 
         # Funding cost for holding the position through this bar.
         if position != 0 and entry_notional:
-            funding_cost = float(position * entry_notional * row.get("fundingRate", 0.0))
+            funding_cost = 0.0
+            for hourly_rate in row.get("fundingEvents", []):
+                rate = max(-0.04, min(0.04, _safe_float(hourly_rate)))
+                funding_cost += position * position_size_coin * price * rate
             cash = float(cash - funding_cost)
             cumulative_funding = float(cumulative_funding + funding_cost)
 
-        if signal != position:
-            if position != 0:
-                close_position(price, time)
-            if signal != 0:
-                open_position(signal, price, time, int(row["confidence"]))
+        protective_exit = None
+        protective_price = None
+        if position != 0 and i > entry_bar_index:
+            high = float(row["high"])
+            low = float(row["low"])
+            if position == 1:
+                stop_price = entry_price * (1 - stop_loss_pct) if stop_loss_pct else None
+                target_price = entry_price * (1 + take_profit_pct) if take_profit_pct else None
+                trailing_price = (
+                    highest_price * (1 - trailing_stop_pct) if trailing_stop_pct else None
+                )
+                stop_candidates = [
+                    ("stop_loss", stop_price),
+                    ("trailing_stop", trailing_price),
+                ]
+                stop_candidates = [
+                    (reason, candidate)
+                    for reason, candidate in stop_candidates
+                    if candidate is not None
+                ]
+                stop_candidates.sort(key=lambda item: item[1], reverse=True)
+                for reason, candidate in stop_candidates:
+                    if low <= candidate:
+                        protective_exit = reason
+                        protective_price = candidate
+                        break
+                if protective_exit is None and target_price is not None and high >= target_price:
+                    protective_exit = "take_profit"
+                    protective_price = target_price
+                if protective_exit is None:
+                    highest_price = max(highest_price, high)
+            else:
+                stop_price = entry_price * (1 + stop_loss_pct) if stop_loss_pct else None
+                target_price = entry_price * (1 - take_profit_pct) if take_profit_pct else None
+                trailing_price = (
+                    lowest_price * (1 + trailing_stop_pct) if trailing_stop_pct else None
+                )
+                stop_candidates = [
+                    ("stop_loss", stop_price),
+                    ("trailing_stop", trailing_price),
+                ]
+                stop_candidates = [
+                    (reason, candidate)
+                    for reason, candidate in stop_candidates
+                    if candidate is not None
+                ]
+                stop_candidates.sort(key=lambda item: item[1])
+                for reason, candidate in stop_candidates:
+                    if high >= candidate:
+                        protective_exit = reason
+                        protective_price = candidate
+                        break
+                if protective_exit is None and target_price is not None and low <= target_price:
+                    protective_exit = "take_profit"
+                    protective_price = target_price
+                if protective_exit is None:
+                    lowest_price = min(lowest_price, low)
+
+        if protective_exit is not None:
+            close_position(float(protective_price), time, protective_exit)
+        elif position != 0 and signal != position:
+            can_signal_exit = i - entry_bar_index >= min_hold_bars
+            if signal == 0 and exit_hysteresis is not None:
+                if position == 1:
+                    can_signal_exit = can_signal_exit and float(row["confidence"]) < exit_hysteresis
+                else:
+                    can_signal_exit = (
+                        can_signal_exit and float(row["confidence"]) > 100 - exit_hysteresis
+                    )
+            if can_signal_exit:
+                close_position(price, time, "signal")
+
+        if (
+            position == 0
+            and signal != 0
+            and (cooldown_bars == 0 or i - last_exit_bar_index > cooldown_bars)
+        ):
+            open_position(signal, price, time, int(row["confidence"]))
 
         mark_equity(price, time)
 
     # Close any open position at the final close.
     if position != 0:
-        close_position(df["close"].iloc[-1], df.index[-1])
+        close_position(df["close"].iloc[-1], df.index[-1], "end_of_backtest")
 
     final_equity = float(equity_curve[-1]["equity"]) if equity_curve else float(cash)
     total_return = float(
@@ -413,10 +538,19 @@ def run_backtest(
     wins = [t for t in trades if t["netPnl"] > 0]
     losses = [t for t in trades if t["netPnl"] <= 0]
     win_rate = float((len(wins) / len(trades) * 100) if trades else 0.0)
-    gross_profit = float(sum(t["grossPnl"] for t in wins))
-    gross_loss = float(abs(sum(t["grossPnl"] for t in losses)))
+    net_profit = float(sum(t["netPnl"] for t in wins))
+    net_loss = float(abs(sum(t["netPnl"] for t in losses)))
     profit_factor = float(
-        gross_profit / gross_loss if gross_loss > 0 else (math.inf if gross_profit > 0 else 0.0)
+        net_profit / net_loss if net_loss > 0 else (math.inf if net_profit > 0 else 0.0)
+    )
+    gross_wins = [t for t in trades if t["grossPnl"] > 0]
+    gross_losses = [t for t in trades if t["grossPnl"] <= 0]
+    gross_profit = float(sum(t["grossPnl"] for t in gross_wins))
+    gross_loss = float(abs(sum(t["grossPnl"] for t in gross_losses)))
+    gross_profit_factor = float(
+        gross_profit / gross_loss
+        if gross_loss > 0
+        else (math.inf if gross_profit > 0 else 0.0)
     )
     avg_trade_return = float(sum(t["returnPct"] for t in trades) / len(trades) if trades else 0.0)
     avg_win = float(sum(t["returnPct"] for t in wins) / len(wins) if wins else 0.0)
@@ -459,6 +593,9 @@ def run_backtest(
         "maxDrawdownPct": _fmt(max_dd),
         "winRatePct": _fmt(win_rate),
         "profitFactor": _fmt(profit_factor) if not math.isinf(float(profit_factor)) else 999.99,
+        "grossProfitFactor": (
+            _fmt(gross_profit_factor) if not math.isinf(float(gross_profit_factor)) else 999.99
+        ),
         "totalTrades": int(len(trades)),
         "avgTradeReturnPct": _fmt(avg_trade_return),
         "avgWinPct": _fmt(avg_win),
@@ -477,6 +614,17 @@ def run_backtest(
         "interval": interval,
         "symbol": symbol,
         "strategyName": strategy.get("name", ""),
+        "makerFee": _fmt(maker_fee, 6),
+        "takerFee": _fmt(taker_fee, 6),
+        "slippagePct": _fmt(slippage_pct, 6),
+        "orderType": order_type,
+        "feeSource": fee_source,
+        "slippageSource": slippage_source,
+        "makerAssumption": "assumes fills; no queue modelling",
+        "totalGrossPnl": _fmt(sum(t["grossPnl"] for t in trades)),
+        "totalFees": _fmt(sum(t["fees"] for t in trades)),
+        "totalFundingCost": _fmt(sum(t["fundingCost"] for t in trades)),
+        "totalNetPnl": _fmt(sum(t["netPnl"] for t in trades)),
     }
 
     return {

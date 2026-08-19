@@ -83,8 +83,8 @@ def _build_signal(
     raw_cfg = strategy or {}
     risk_cfg = raw_cfg.get("riskConfig") or {}
     cfg = {**raw_cfg, **risk_cfg}
-    long_funding_threshold = cfg.get("longFundingThreshold", -0.0005)
-    short_funding_threshold = cfg.get("shortFundingThreshold", 0.0005)
+    long_funding_threshold = cfg.get("longFundingThreshold", -0.000005)
+    short_funding_threshold = cfg.get("shortFundingThreshold", 0.000012)
     leverage = min(int(cfg.get("leverage", 3)), market.get("maxLeverage", 3))
     allocation = float(cfg.get("allocation", 0.10))
     confidence_floor = int(cfg.get("confidenceFloor", 60))

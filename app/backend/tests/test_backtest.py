@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
-from backend.services.backtest import _sharpe_ratio, run_backtest
+import backend.services.backtest as backtest_module
+from backend.services.backtest import _merge_funding, _sharpe_ratio, run_backtest
 
 
 @pytest.fixture
@@ -24,8 +26,16 @@ def trend_strategy():
 
 def test_run_backtest_returns_expected_summary_and_curves(mock_hyperliquid_client, trend_strategy):
     mock_hyperliquid_client.candles = [
-        {"time": 1_704_067_200_000 + i * 3_600_000, "open": 100.0 + i, "high": 101.0 + i,
-         "low": 99.0 + i, "close": 100.0 + i, "volume": 1_000.0, "symbol": "BTC", "interval": "1h"}
+        {
+            "time": 1_704_067_200_000 + i * 3_600_000,
+            "open": 100.0 + i,
+            "high": 101.0 + i,
+            "low": 99.0 + i,
+            "close": 100.0 + i,
+            "volume": 1_000.0,
+            "symbol": "BTC",
+            "interval": "1h",
+        }
         for i in range(100)
     ]
 
@@ -85,8 +95,16 @@ def test_run_backtest_returns_expected_summary_and_curves(mock_hyperliquid_clien
 
 def test_run_backtest_price_and_trade_confidence_populated(mock_hyperliquid_client, trend_strategy):
     mock_hyperliquid_client.candles = [
-        {"time": 1_704_067_200_000 + i * 3_600_000, "open": 100.0 + i, "high": 101.0 + i,
-         "low": 99.0 + i, "close": 100.0 + i, "volume": 1_000.0, "symbol": "BTC", "interval": "1h"}
+        {
+            "time": 1_704_067_200_000 + i * 3_600_000,
+            "open": 100.0 + i,
+            "high": 101.0 + i,
+            "low": 99.0 + i,
+            "close": 100.0 + i,
+            "volume": 1_000.0,
+            "symbol": "BTC",
+            "interval": "1h",
+        }
         for i in range(100)
     ]
 
@@ -120,3 +138,298 @@ def test_sharpe_ratio_edge_cases():
 
     # NaN/inf in equity should fall back to 0.0.
     assert _sharpe_ratio([float("nan"), 1.0, 2.0], "1h") == 0.0
+
+
+def _scripted_backtest(
+    monkeypatch,
+    mock_hyperliquid_client,
+    signals,
+    prices,
+    confidences=None,
+    highs=None,
+    lows=None,
+    funding=None,
+    interval="1h",
+    risk_config=None,
+    **kwargs,
+):
+    confidences = confidences or [80 if signal else 50 for signal in signals]
+    highs = highs or prices
+    lows = lows or prices
+    step_ms = {
+        "5m": 5 * 60_000,
+        "15m": 15 * 60_000,
+        "1h": 60 * 60_000,
+    }[interval]
+    start_ms = 1_704_067_200_000
+    mock_hyperliquid_client.candles = [
+        {
+            "time": start_ms + i * step_ms,
+            "open": price,
+            "high": highs[i],
+            "low": lows[i],
+            "close": price,
+            "volume": 1_000.0,
+            "symbol": "BTC",
+            "interval": interval,
+        }
+        for i, price in enumerate(prices)
+    ]
+    mock_hyperliquid_client.funding = funding or []
+
+    def scripted_signals(df, strategy):
+        return pd.DataFrame(
+            {"signal": signals, "confidence": confidences},
+            index=df.index,
+        )
+
+    monkeypatch.setattr(backtest_module, "_compute_signals", scripted_signals)
+    config = {
+        "template": "custom",
+        "riskConfig": {
+            "leverage": 1,
+            "allocation": 1.0,
+            "confidenceFloor": 60,
+            **(risk_config or {}),
+        },
+    }
+    return run_backtest(
+        "BTC",
+        interval,
+        "2024-01-01",
+        "2024-01-03",
+        strategy=config,
+        initial_balance=10_000.0,
+        **kwargs,
+    )
+
+
+def test_fee_side_and_exit_notional_fee(monkeypatch, mock_hyperliquid_client):
+    taker = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 0],
+        [100.0, 110.0],
+        taker_fee=0.01,
+        slippage_pct=0.0,
+        maker_fee=0.002,
+        order_type="taker",
+    )
+    maker = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 0],
+        [100.0, 110.0],
+        taker_fee=0.01,
+        slippage_pct=0.0,
+        maker_fee=0.002,
+        order_type="maker",
+    )
+
+    assert taker["trades"][0]["fees"] == 210.0
+    assert taker["trades"][0]["netPnl"] == 790.0
+    assert maker["trades"][0]["fees"] == 42.0
+    assert maker["trades"][0]["netPnl"] == 958.0
+
+
+def test_summary_metrics_use_net_trade_returns(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 0],
+        [100.0, 110.0],
+        taker_fee=0.06,
+        slippage_pct=0.0,
+    )
+
+    trade = result["trades"][0]
+    assert trade["grossPnl"] > 0
+    assert trade["netPnl"] < 0
+    assert trade["returnPct"] < 0
+    assert result["summary"]["profitFactor"] == 0.0
+    assert result["summary"]["grossProfitFactor"] == 999.99
+    assert result["summary"]["avgTradeReturnPct"] == trade["returnPct"]
+
+
+def test_min_hold_cooldown_and_exit_hysteresis(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 0, 0, -1, 1, 0],
+        [100.0] * 6,
+        confidences=[80, 50, 50, 20, 80, 50],
+        risk_config={
+            "minHoldBars": 2,
+            "cooldownBars": 2,
+            "exitHysteresis": 50,
+        },
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    assert len(result["trades"]) == 1
+    assert result["trades"][0]["exitReason"] == "signal"
+    assert result["trades"][0]["exitTime"].endswith("03:00:00+00:00")
+
+
+def test_stop_loss_wins_when_stop_and_target_are_both_hit(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1],
+        [100.0, 100.0],
+        highs=[100.0, 110.0],
+        lows=[100.0, 90.0],
+        risk_config={"stopLossPct": 0.05, "takeProfitPct": 0.05},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    trade = result["trades"][0]
+    assert trade["exitReason"] == "stop_loss"
+    assert trade["exitPrice"] == 95.0
+    assert trade["grossPnl"] == -500.0
+
+
+def test_take_profit_and_trailing_stop_exits(monkeypatch, mock_hyperliquid_client):
+    target = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1],
+        [100.0, 100.0],
+        highs=[100.0, 106.0],
+        lows=[100.0, 101.0],
+        risk_config={"takeProfitPct": 0.05},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+    trailing = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1, 1],
+        [100.0, 100.0, 100.0],
+        highs=[100.0, 110.0, 109.0],
+        lows=[100.0, 108.0, 103.0],
+        risk_config={"trailingStopPct": 0.05},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    assert target["trades"][0]["exitReason"] == "take_profit"
+    assert target["trades"][0]["exitPrice"] == 105.0
+    assert trailing["trades"][0]["exitReason"] == "trailing_stop"
+    assert trailing["trades"][0]["exitPrice"] == 104.5
+
+
+def test_trailing_stop_uses_prior_bar_extreme(monkeypatch, mock_hyperliquid_client):
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1],
+        [100.0, 100.0],
+        highs=[100.0, 110.0],
+        lows=[100.0, 94.0],
+        risk_config={"trailingStopPct": 0.05},
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    trade = result["trades"][0]
+    assert trade["exitReason"] == "trailing_stop"
+    assert trade["exitPrice"] == 95.0
+
+
+def test_funding_uses_hourly_events_and_current_notional(monkeypatch, mock_hyperliquid_client):
+    start_ms = 1_704_067_200_000
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1, 1, 1, 1, 0],
+        [100.0, 100.0, 100.0, 100.0, 104.0, 104.0],
+        interval="15m",
+        funding=[
+            {
+                "time": start_ms + 60 * 60_000,
+                "fundingRate": 0.01,
+                "premium": 0.0,
+            }
+        ],
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    assert result["trades"][0]["fundingCost"] == 104.0
+
+
+def test_funding_rate_is_clamped_per_hour(monkeypatch, mock_hyperliquid_client):
+    start_ms = 1_704_067_200_000
+    result = _scripted_backtest(
+        monkeypatch,
+        mock_hyperliquid_client,
+        [1, 1, 0],
+        [100.0, 100.0, 100.0],
+        funding=[
+            {
+                "time": start_ms + 60 * 60_000,
+                "fundingRate": 0.5,
+                "premium": 0.0,
+            }
+        ],
+        maker_fee=0.0,
+        taker_fee=0.0,
+        slippage_pct=0.0,
+    )
+
+    assert result["trades"][0]["fundingCost"] == 400.0
+
+
+def test_merge_funding_does_not_backfill_leading_gaps():
+    start = pd.Timestamp("2024-01-01T00:00:00Z")
+    df = pd.DataFrame(index=[start, start + pd.Timedelta(hours=1)])
+    merged = _merge_funding(
+        df,
+        [{"time": int((start + pd.Timedelta(hours=1)).timestamp() * 1000), "fundingRate": 0.01}],
+    )
+
+    assert merged["fundingRate"].tolist() == [0.0, 0.01]
+
+
+def test_merge_funding_groups_hourly_events_inside_long_bars():
+    start = pd.Timestamp("2024-01-01T00:00:00Z")
+    df = pd.DataFrame(index=[start, start + pd.Timedelta(hours=4)])
+    merged = _merge_funding(
+        df,
+        [
+            {"time": int((start + pd.Timedelta(hours=1)).timestamp() * 1000), "fundingRate": 0.01},
+            {"time": int((start + pd.Timedelta(hours=3)).timestamp() * 1000), "fundingRate": 0.02},
+            {
+                "time": int((start + pd.Timedelta(hours=5)).timestamp() * 1000),
+                "fundingRate": 0.03,
+            },
+        ],
+    )
+
+    assert merged["fundingEvents"].iloc[0] == [0.01, 0.02]
+    assert merged["fundingEvents"].iloc[1] == [0.03]
+
+
+def test_merge_funding_extremes_use_only_prior_bars():
+    start = pd.Timestamp("2024-01-01T00:00:00Z")
+    index = pd.date_range(start, periods=169, freq="h")
+    df = pd.DataFrame(index=index)
+    history = [
+        {"time": int(timestamp.timestamp() * 1000), "fundingRate": float(i)}
+        for i, timestamp in enumerate(index)
+    ]
+
+    merged = _merge_funding(df, history)
+
+    assert pd.isna(merged["fundingMedian168"].iloc[167])
+    assert merged["fundingMedian168"].iloc[168] == 83.5
+    assert merged["fundingRate"].iloc[168] == 168.0

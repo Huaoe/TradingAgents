@@ -14,7 +14,14 @@ import {
 import { Play, Loader2, TrendingUp, TrendingDown, Activity, Percent, DollarSign, BarChart3, Calendar, ZoomIn, ZoomOut, RotateCcw, AlertTriangle } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Card } from '../components/Card';
-import { fetchStrategies, runBacktest, updateStrategy } from '../services/api';
+import {
+  fetchSlippageEstimate,
+  fetchStrategies,
+  fetchUserFees,
+  runBacktest,
+  updateStrategy,
+} from '../services/api';
+import { useWallet } from '../context/useWallet';
 import type { Strategy, BacktestResult, BacktestInterval } from '../types';
 
 const intervals: { label: string; value: BacktestInterval }[] = [
@@ -48,7 +55,7 @@ const STAT_HINTS: Record<string, string> = {
   'Sharpe Ratio': 'Risk-adjusted return; higher is better.',
   'Max Drawdown': 'Largest peak-to-trough decline in equity.',
   'Win Rate': 'Percentage of trades that closed with a positive net PnL.',
-  'Profit Factor': 'Gross profit divided by gross loss.',
+  'Profit Factor': 'Net profit divided by net loss after fees and funding.',
   '# Trades': 'Total number of round-trip trades executed.',
   'Final Balance': 'Account value at the end of the backtest.',
   'Avg Win': 'Average return percent of winning trades.',
@@ -68,7 +75,7 @@ const TRADE_HINTS: Record<string, string> = {
   'Exit $': 'Exit price of the trade.',
   Size: 'Position size in coins.',
   'Net PnL': 'Net profit or loss after fees and funding.',
-  Return: 'Gross return percent on the trade.',
+  Return: 'Net return percent on the trade, after fees and funding.',
   Confidence: 'Signal confidence score at entry (0-100).',
 };
 
@@ -215,14 +222,21 @@ export function Backtest() {
   const [startAt, setStartAt] = useState(toInputDate(start));
   const [endAt, setEndAt] = useState(toInputDate(end));
   const [initialBalance, setInitialBalance] = useState(10000);
-  const [makerFee, setMakerFee] = useState(0.0002);
+  const [makerFee, setMakerFee] = useState(0.00015);
   const [takerFee, setTakerFee] = useState(0.00045);
-  const [slippagePct, setSlippagePct] = useState(0.0005);
+  const [slippagePct, setSlippagePct] = useState(0.00005);
+  const [orderType, setOrderType] = useState<'maker' | 'taker'>('taker');
+  const [feeSource, setFeeSource] = useState<'generic_default' | 'wallet' | 'manual'>(
+    'generic_default',
+  );
+  const [slippageSource, setSlippageSource] = useState<'default' | 'live_book'>('default');
+  const [estimatingSlippage, setEstimatingSlippage] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [activated, setActivated] = useState(false);
+  const { selectedWallet } = useWallet();
 
   useEffect(() => {
     fetchStrategies().then((list) => {
@@ -236,6 +250,34 @@ export function Backtest() {
       }
     }).catch(() => setStrategies([]));
   }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedWallet) {
+      setMakerFee(0.00015);
+      setTakerFee(0.00045);
+      setFeeSource('generic_default');
+      return () => {
+        active = false;
+      };
+    }
+    fetchUserFees(selectedWallet.address)
+      .then((fees) => {
+        if (!active) return;
+        setMakerFee(fees.makerFee);
+        setTakerFee(fees.takerFee);
+        setFeeSource('wallet');
+      })
+      .catch(() => {
+        if (!active) return;
+        setMakerFee(0.00015);
+        setTakerFee(0.00045);
+        setFeeSource('generic_default');
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedWallet]);
 
   async function handleRun(e: React.FormEvent) {
     e.preventDefault();
@@ -254,12 +296,32 @@ export function Backtest() {
         makerFee,
         takerFee,
         slippagePct,
+        orderType,
+        feeSource,
+        slippageSource,
       });
       setResult(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Backtest failed');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleEstimateSlippage() {
+    const selected = strategies.find((strategy) => strategy.id === strategyId);
+    const allocation = selected?.riskConfig?.allocation ?? 0.10;
+    const leverage = selected?.riskConfig?.leverage ?? 3;
+    const notional = initialBalance * allocation * leverage;
+    setEstimatingSlippage(true);
+    try {
+      const estimate = await fetchSlippageEstimate(symbol.toUpperCase(), notional);
+      setSlippagePct(Number(estimate.slippagePct.toFixed(8)));
+      setSlippageSource('live_book');
+    } catch {
+      setError('Live-book slippage estimate unavailable; keeping the current value.');
+    } finally {
+      setEstimatingSlippage(false);
     }
   }
 
@@ -398,34 +460,68 @@ export function Backtest() {
           {showAdvanced && (
             <>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-400">Maker Fee</label>
+                <label className="text-xs font-medium text-gray-400">
+                  Maker Fee {feeSource === 'wallet' ? '(wallet tier)' : '(default/manual)'}
+                </label>
                 <input
                   type="number"
                   step="0.00001"
                   value={makerFee}
-                  onChange={(e) => setMakerFee(Number(e.target.value))}
+                  onChange={(e) => {
+                    setMakerFee(Number(e.target.value));
+                    setFeeSource('manual');
+                  }}
                   className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-400">Taker Fee</label>
+                <label className="text-xs font-medium text-gray-400">
+                  Taker Fee {feeSource === 'wallet' ? '(wallet tier)' : '(default/manual)'}
+                </label>
                 <input
                   type="number"
                   step="0.00001"
                   value={takerFee}
-                  onChange={(e) => setTakerFee(Number(e.target.value))}
+                  onChange={(e) => {
+                    setTakerFee(Number(e.target.value));
+                    setFeeSource('manual');
+                  }}
                   className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
                 />
               </div>
               <div className="space-y-1 lg:col-span-2">
-                <label className="text-xs font-medium text-gray-400">Slippage %</label>
-                <input
-                  type="number"
-                  step="0.0001"
-                  value={slippagePct}
-                  onChange={(e) => setSlippagePct(Number(e.target.value))}
+                <label className="text-xs font-medium text-gray-400">Order Type</label>
+                <select
+                  value={orderType}
+                  onChange={(e) => setOrderType(e.target.value as 'maker' | 'taker')}
                   className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
-                />
+                >
+                  <option value="taker">Taker (fee + slippage)</option>
+                  <option value="maker">Maker (maker fee, no slippage)</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-400">Slippage %</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.00001"
+                    value={slippagePct}
+                    onChange={(e) => {
+                      setSlippagePct(Number(e.target.value));
+                      setSlippageSource('default');
+                    }}
+                    className="min-w-0 flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleEstimateSlippage}
+                    disabled={estimatingSlippage}
+                    className="whitespace-nowrap rounded-lg border border-gray-700 px-2 text-xs text-violet-300 hover:border-violet-500 disabled:opacity-60"
+                  >
+                    {estimatingSlippage ? 'Estimating…' : 'Estimate live book'}
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -501,7 +597,8 @@ export function Backtest() {
               positive={false}
             />
             <StatCard label="Win Rate" value={formatPct(stats.winRatePct)} icon={Percent} />
-            <StatCard label="Profit Factor" value={formatNumber(stats.profitFactor)} icon={BarChart3} />
+            <StatCard label="Net Profit Factor" value={formatNumber(stats.profitFactor)} icon={BarChart3} />
+            <StatCard label="Gross Profit Factor" value={formatNumber(stats.grossProfitFactor)} icon={BarChart3} />
             <StatCard label="# Trades" value={String(stats.totalTrades)} icon={Activity} />
             <StatCard
               label="Final Balance"
@@ -614,6 +711,45 @@ export function Backtest() {
             </Card>
           </div>
 
+          <Card title="Cost Breakdown">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+              <div>
+                <div className="text-xs text-gray-500">Gross PnL</div>
+                <div className={`font-semibold ${stats.totalGrossPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatUSD(stats.totalGrossPnl)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Fees</div>
+                <div className="font-semibold text-red-300">{formatUSD(-stats.totalFees)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Funding</div>
+                <div className="font-semibold text-red-300">{formatUSD(-stats.totalFundingCost)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Net PnL</div>
+                <div className={`font-semibold ${stats.totalNetPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {formatUSD(stats.totalNetPnl)}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-gray-500">Assumptions</div>
+                <div className="text-gray-300">
+                  {stats.orderType} · fee {(stats.orderType === 'maker' ? stats.makerFee : stats.takerFee) * 10000} bps
+                  {stats.orderType === 'taker' ? ` + ${stats.slippagePct * 10000} bps slip` : ''}
+                  {stats.feeSource === 'wallet'
+                    ? ' · wallet tier'
+                    : stats.feeSource === 'manual'
+                      ? ' · manual override'
+                      : ' · generic default'}
+                  {stats.slippageSource === 'live_book' ? ' · live-book estimate' : ''}
+                  {stats.orderType === 'maker' ? ' · assumes fills, no queue modelling' : ''}
+                </div>
+              </div>
+            </div>
+          </Card>
+
           <Card title="Price + Buy / Sell Signals" actions={<ZoomControls zoomIn={priceZoom.zoomIn} zoomOut={priceZoom.zoomOut} reset={priceZoom.reset} />}>
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -679,6 +815,7 @@ export function Backtest() {
                     <th className="text-right py-2 px-2" title={TRADE_HINTS['Exit $']}>Exit $</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Size}>Size</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS['Net PnL']}>Net PnL</th>
+                    <th className="text-left py-2 px-2">Exit Reason</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Return}>Return</th>
                     <th className="text-right py-2 px-2" title={TRADE_HINTS.Confidence}>Confidence</th>
                   </tr>
@@ -703,6 +840,7 @@ export function Backtest() {
                       <td className={`py-2 px-2 text-right font-medium ${t.netPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {formatUSD(t.netPnl)}
                       </td>
+                      <td className="py-2 px-2 text-gray-300">{t.exitReason.replaceAll('_', ' ')}</td>
                       <td className={`py-2 px-2 text-right ${t.returnPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                         {formatPct(t.returnPct)}
                       </td>

@@ -116,8 +116,11 @@ def signal_for_bar(
     funding = row.get("fundingRate", 0.0)
 
     cfg = strategy.get("riskConfig") or {}
-    long_thr = _safe_float(cfg.get("longFundingThreshold"), -0.0005)
-    short_thr = _safe_float(cfg.get("shortFundingThreshold"), 0.0005)
+    long_thr = _safe_float(cfg.get("longFundingThreshold"), -0.000005)
+    short_thr = _safe_float(cfg.get("shortFundingThreshold"), 0.000012)
+    funding_extreme_k = max(0.0, _safe_float(cfg.get("fundingExtremeK"), 1.5))
+    funding_median = row.get("fundingMedian168")
+    funding_std = row.get("fundingStd168")
     confidence_floor = int(_safe_float(cfg.get("confidenceFloor"), 60))
     template = strategy.get("template", "custom").replace("_", "-")
 
@@ -147,6 +150,15 @@ def signal_for_bar(
             return -15
         return 0
 
+    def funding_extreme_signal() -> int | None:
+        if pd.notna(funding_median) and pd.notna(funding_std) and funding_std > 0:
+            if funding < funding_median - funding_extreme_k * funding_std:
+                return 1
+            if funding > funding_median + funding_extreme_k * funding_std:
+                return -1
+            return 0
+        return None
+
     score = 50
     if template == "momentum-breakout":
         if trend_up:
@@ -165,9 +177,10 @@ def signal_for_bar(
             return 0, int(score)
         score += funding_score()
     elif template in ("funding-rate-arb", "hype-delta-neutral", "basis-arbitrage"):
-        if funding < long_thr:
+        extreme_signal = funding_extreme_signal()
+        if extreme_signal == 1 or (extreme_signal is None and funding < long_thr):
             score = 80
-        elif funding > short_thr:
+        elif extreme_signal == -1 or (extreme_signal is None and funding > short_thr):
             score = 20
         else:
             return 0, int(score)

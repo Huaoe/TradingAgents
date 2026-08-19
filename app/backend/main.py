@@ -246,6 +246,9 @@ async def backtest(payload: BacktestRequest) -> BacktestResult:
             maker_fee=payload.makerFee,
             taker_fee=payload.takerFee,
             slippage_pct=payload.slippagePct,
+            order_type=payload.orderType,
+            fee_source=payload.feeSource,
+            slippage_source=payload.slippageSource,
         )
         _METRICS["backtests_run"] += 1
         return BacktestResult(**result)
@@ -266,6 +269,31 @@ async def candles(symbol: str, interval: str = "1h") -> list[dict[str, Any]]:
 @app.get("/api/orderbook/{symbol}")
 async def orderbook(symbol: str) -> dict[str, Any]:
     return HyperliquidClient().get_orderbook(symbol)
+
+
+@app.get("/api/fees/{address}")
+async def user_fees(address: str) -> dict[str, Any]:
+    try:
+        return HyperliquidClient().get_user_fees(address)
+    except Exception as exc:
+        logger.warning("Could not fetch Hyperliquid fees for %s: %s", address, exc)
+        raise HTTPException(status_code=502, detail="Could not fetch wallet fee rates") from exc
+
+
+@app.get("/api/slippage-estimate/{symbol}")
+async def slippage_estimate(symbol: str, notional: float) -> dict[str, Any]:
+    try:
+        estimate = HyperliquidClient().estimate_slippage(symbol, notional)
+        return {
+            "symbol": symbol.upper(),
+            "notional": notional,
+            "slippagePct": estimate,
+            "slippageBps": estimate * 10_000,
+            "source": "live_book",
+        }
+    except Exception as exc:
+        logger.warning("Could not estimate slippage for %s: %s", symbol, exc)
+        raise HTTPException(status_code=502, detail="Could not estimate live-book slippage") from exc
 
 
 @app.get("/api/funding/{symbol}")

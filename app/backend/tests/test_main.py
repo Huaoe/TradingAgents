@@ -132,3 +132,15 @@ def test_metrics_update_with_activity(test_client):
     assert body["total_backtests_run"] == 1
     assert body["total_orders_created"] == 1
     assert body["open_positions_count"] == 1
+
+
+def test_fee_and_slippage_estimate_routes(test_client):
+    fees = test_client.get("/api/fees/0xabc")
+    assert fees.status_code == 200
+    assert fees.json()["makerFee"] == 0.00015
+    assert fees.json()["takerFee"] == 0.00045
+
+    estimate = test_client.get("/api/slippage-estimate/BTC?notional=3000")
+    assert estimate.status_code == 200
+    assert estimate.json()["slippagePct"] == 0.00005
+    assert estimate.json()["source"] == "live_book"

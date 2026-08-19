@@ -118,6 +118,35 @@ def test_signal_for_bar_trend_following(default_risk_config):
     assert conf >= 70
 
 
+def test_funding_arb_uses_shifted_relative_extremes_with_absolute_fallback():
+    df = pd.DataFrame(
+        {
+            "close": [100.0, 100.0, 100.0],
+            "sma20": [100.0, 100.0, 100.0],
+            "sma50": [100.0, 100.0, 100.0],
+            "rsi14": [50.0, 50.0, 50.0],
+            "upperBB": [110.0, 110.0, 110.0],
+            "lowerBB": [90.0, 90.0, 90.0],
+            "fundingRate": [-2.0, 2.0, 0.00002],
+            "fundingMedian168": [np.nan, 0.0, 0.0],
+            "fundingStd168": [np.nan, 1.0, np.nan],
+        }
+    )
+    strategy = {
+        "template": "funding_rate_arb",
+        "riskConfig": {
+            "longFundingThreshold": -0.000002,
+            "shortFundingThreshold": 0.000011,
+            "fundingExtremeK": 1.5,
+        },
+    }
+
+    assert signal_for_bar(df, 1, strategy) == (-1, 20)
+    assert signal_for_bar(df, 2, strategy) == (-1, 20)
+    df.loc[1, "fundingRate"] = -2.0
+    assert signal_for_bar(df, 1, strategy) == (1, 80)
+
+
 def test_signal_for_bar_momentum_breakout(default_risk_config):
     # 80 bars flat, small ramp, final explosion above the upper Bollinger band.
     closes = [100.0] * 81 + [100.0 + (i - 80) * 2.0 for i in range(81, 99)] + [180.0]

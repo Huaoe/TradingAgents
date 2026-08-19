@@ -12,6 +12,41 @@ from tradingagents.llm_clients import model_catalog
 
 from backend.models.strategy import Strategy, StrategyCreate, StrategyUpdate
 
+_DEFAULT_LONG_FUNDING = -0.000005
+_DEFAULT_SHORT_FUNDING = 0.000012
+_ARB_LONG_FUNDING = -0.000002
+_ARB_SHORT_FUNDING = 0.000011
+
+
+def _risk_config(
+    *,
+    leverage: int,
+    allocation: float,
+    confidence_floor: int,
+    min_hold_bars: int,
+    cooldown_bars: int,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    trailing_stop_pct: float,
+    funding_arb: bool = False,
+) -> dict[str, Any]:
+    """Build template risk defaults; funding thresholds are hourly rates."""
+    return {
+        "longFundingThreshold": _ARB_LONG_FUNDING if funding_arb else _DEFAULT_LONG_FUNDING,
+        "shortFundingThreshold": _ARB_SHORT_FUNDING if funding_arb else _DEFAULT_SHORT_FUNDING,
+        "leverage": leverage,
+        "allocation": allocation,
+        "confidenceFloor": confidence_floor,
+        "minHoldBars": min_hold_bars,
+        "cooldownBars": cooldown_bars,
+        "exitHysteresis": 50,
+        "stopLossPct": stop_loss_pct,
+        "takeProfitPct": take_profit_pct,
+        "trailingStopPct": trailing_stop_pct,
+        "fundingExtremeK": 1.5 if funding_arb else None,
+    }
+
+
 TEMPLATES: list[dict[str, Any]] = [
     {
         "id": "template-momentum-breakout",
@@ -23,13 +58,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 5,
-            "allocation": 0.15,
-            "confidenceFloor": 65,
-        },
+        "riskConfig": _risk_config(
+            leverage=5, allocation=0.15, confidence_floor=65, min_hold_bars=3,
+            cooldown_bars=2, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-mean-reversion",
@@ -41,13 +73,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.001,
-            "shortFundingThreshold": 0.001,
-            "leverage": 3,
-            "allocation": 0.10,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=4,
+            cooldown_bars=2, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-funding-rate-arb",
@@ -59,13 +88,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0015,
-            "shortFundingThreshold": 0.0015,
-            "leverage": 2,
-            "allocation": 0.20,
-            "confidenceFloor": 70,
-        },
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.20, confidence_floor=70, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-hype-delta-neutral",
@@ -77,13 +104,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.002,
-            "shortFundingThreshold": 0.002,
-            "leverage": 1,
-            "allocation": 0.25,
-            "confidenceFloor": 75,
-        },
+        "riskConfig": _risk_config(
+            leverage=1, allocation=0.25, confidence_floor=75, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-trend-following",
@@ -95,13 +120,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 4,
-            "allocation": 0.12,
-            "confidenceFloor": 62,
-        },
+        "riskConfig": _risk_config(
+            leverage=4, allocation=0.12, confidence_floor=62, min_hold_bars=8,
+            cooldown_bars=4, stop_loss_pct=0.025, take_profit_pct=0.05, trailing_stop_pct=0.02,
+        ),
     },
     {
         "id": "template-scalp-momentum",
@@ -113,13 +135,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 6,
-            "allocation": 0.08,
-            "confidenceFloor": 68,
-        },
+        "riskConfig": _risk_config(
+            leverage=6, allocation=0.08, confidence_floor=68, min_hold_bars=2,
+            cooldown_bars=2, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+        ),
     },
     {
         "id": "template-news-event",
@@ -131,13 +150,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "claude-sonnet-5",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 4,
-            "allocation": 0.10,
-            "confidenceFloor": 70,
-        },
+        "riskConfig": _risk_config(
+            leverage=4, allocation=0.10, confidence_floor=70, min_hold_bars=2,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-basis-arbitrage",
@@ -149,13 +165,11 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "deep",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 2,
-            "allocation": 0.30,
-            "confidenceFloor": 75,
-        },
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.30, confidence_floor=75, min_hold_bars=6,
+            cooldown_bars=4, stop_loss_pct=0.01, take_profit_pct=0.015, trailing_stop_pct=0.008,
+            funding_arb=True,
+        ),
     },
     {
         "id": "template-grid-trading",
@@ -167,13 +181,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 2,
-            "allocation": 0.10,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.10, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.015, take_profit_pct=0.02, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-dual-thrust",
@@ -185,13 +196,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.12,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
     {
         "id": "template-turtle-breakout",
@@ -203,13 +211,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.12,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=12,
+            cooldown_bars=6, stop_loss_pct=0.03, take_profit_pct=0.08, trailing_stop_pct=0.025,
+        ),
     },
     {
         "id": "template-ema-bands-trend-catch",
@@ -221,13 +226,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.12,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=8,
+            cooldown_bars=4, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.02,
+        ),
     },
     {
         "id": "template-atr-rsi-combo",
@@ -239,13 +241,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.10,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=4,
+            cooldown_bars=3, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.012,
+        ),
     },
     {
         "id": "template-time-series-momentum",
@@ -257,13 +256,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.12,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.12, confidence_floor=60, min_hold_bars=12,
+            cooldown_bars=6, stop_loss_pct=0.03, take_profit_pct=0.07, trailing_stop_pct=0.025,
+        ),
     },
     {
         "id": "template-overnight-seasonality-btc",
@@ -275,13 +271,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 2,
-            "allocation": 0.10,
-            "confidenceFloor": 65,
-        },
+        "riskConfig": _risk_config(
+            leverage=2, allocation=0.10, confidence_floor=65, min_hold_bars=1,
+            cooldown_bars=1, stop_loss_pct=0.015, take_profit_pct=0.025, trailing_stop_pct=0.01,
+        ),
     },
     {
         "id": "template-custom",
@@ -293,13 +286,10 @@ TEMPLATES: list[dict[str, Any]] = [
         "llmModel": "glm-5-turbo",
         "llmMode": "quick",
         "executionMode": "manual",
-        "riskConfig": {
-            "longFundingThreshold": -0.0005,
-            "shortFundingThreshold": 0.0005,
-            "leverage": 3,
-            "allocation": 0.10,
-            "confidenceFloor": 60,
-        },
+        "riskConfig": _risk_config(
+            leverage=3, allocation=0.10, confidence_floor=60, min_hold_bars=3,
+            cooldown_bars=3, stop_loss_pct=0.02, take_profit_pct=0.04, trailing_stop_pct=0.015,
+        ),
     },
 ]
 
@@ -375,9 +365,26 @@ class StrategyStore:
         with sqlite3.connect(self._db_path) as conn:
             for template in TEMPLATES:
                 existing = conn.execute(
-                    "SELECT 1 FROM strategies WHERE id = ?", (template["id"],)
+                    "SELECT data, created_at FROM strategies WHERE id = ?", (template["id"],)
                 ).fetchone()
                 if existing:
+                    record = json.loads(existing[0])
+                    created_at = record.get("createdAt") or existing[1]
+                    now = _utc_now()
+                    record.update(
+                        {
+                            "name": template["name"],
+                            "description": template["description"],
+                            "template": template["template"],
+                            "riskConfig": template["riskConfig"],
+                            "createdAt": created_at,
+                            "updatedAt": now,
+                        }
+                    )
+                    conn.execute(
+                        "UPDATE strategies SET data = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(record), now, template["id"]),
+                    )
                     continue
                 now = _utc_now()
                 record = {
